@@ -54,6 +54,20 @@ public class PageResult<T> {
     }
 
     /**
+     * 静态工厂方法，便捷创建分页结果
+     *
+     * @param records 数据列表
+     * @param total   总记录数
+     * @param page    当前页码
+     * @param size    每页大小
+     * @param <T>     数据类型
+     * @return PageResult 实例
+     */
+    public static <T> PageResult<T> of(List<T> records, Long total, Integer page, Integer size) {
+        return new PageResult<>(records, total, page, size);
+    }
+
+    /**
      * 计算总页数
      *
      * @param total 总记录数

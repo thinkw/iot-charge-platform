@@ -92,9 +92,12 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
         switch (type) {
             case CONNECT -> handleConnect(ctx, msg);
             case PUBLISH -> handlePublish(ctx, msg);
+            case SUBSCRIBE -> handleSubscribe(ctx, msg);
             case PINGREQ -> handlePingreq(ctx);
             case DISCONNECT -> handleDisconnect(ctx);
             case PUBACK -> { /* PUBACK 由 Netty 内部处理，不需要业务处理 */ }
+            case PUBREC -> handlePubrec(ctx, msg);
+            case PUBREL -> handlePubrel(ctx, msg);
             default -> log.debug("[MQTT] 未处理的消息类型: {}", type);
         }
     }
@@ -193,6 +196,49 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
         if (msg.getQos() == 1) {
             ctx.writeAndFlush(MqttMessage.puback(msg.getPacketId()));
         }
+    }
+
+    // ==================== SUBSCRIBE / PUBREC / PUBREL ====================
+
+    /**
+     * 处理订阅请求：回复 SUBACK 确认
+     */
+    private void handleSubscribe(ChannelHandlerContext ctx, MqttMessage msg) {
+        log.debug("[MQTT] SUBSCRIBE - SN: {}, packetId: {}", clientId, msg.getPacketId());
+        ctx.writeAndFlush(MqttMessage.suback(msg.getPacketId()));
+    }
+
+    /**
+     * 处理 PUBREC（QoS 2 第一步响应）：回复 PUBREL
+     * <p>
+     * QoS 2 握手流程：PUBLISH → PUBREC → PUBREL → PUBCOMP
+     * 服务端收到 PUBLISH(QoS 2) 后发送 PUBREC，客户端收到后回复 PUBREL。
+     * 此处处理客户端发来的 PUBREC（客户端请求服务端发送的 QoS 2 消息）。
+     * </p>
+     */
+    private void handlePubrec(ChannelHandlerContext ctx, MqttMessage msg) {
+        log.debug("[MQTT] PUBREC - SN: {}, packetId: {}", clientId, msg.getPacketId());
+        // 回复 PUBREL（QoS 2 第二步）
+        MqttMessage pubrel = new MqttMessage();
+        pubrel.setMessageType(MqttMessageType.PUBREL);
+        pubrel.setPacketId(msg.getPacketId());
+        pubrel.setQos(1); // PUBREL 必须用 QoS 1
+        ctx.writeAndFlush(pubrel);
+    }
+
+    /**
+     * 处理 PUBREL（QoS 2 第二步响应）：回复 PUBCOMP
+     * <p>
+     * 客户端发送 PUBREL 表示准备释放消息，服务端回复 PUBCOMP 完成 QoS 2 握手。
+     * </p>
+     */
+    private void handlePubrel(ChannelHandlerContext ctx, MqttMessage msg) {
+        log.debug("[MQTT] PUBREL - SN: {}, packetId: {}", clientId, msg.getPacketId());
+        // 回复 PUBCOMP（QoS 2 第三步，完成握手）
+        MqttMessage pubcomp = new MqttMessage();
+        pubcomp.setMessageType(MqttMessageType.PUBCOMP);
+        pubcomp.setPacketId(msg.getPacketId());
+        ctx.writeAndFlush(pubcomp);
     }
 
     // ==================== PINGREQ / DISCONNECT ====================

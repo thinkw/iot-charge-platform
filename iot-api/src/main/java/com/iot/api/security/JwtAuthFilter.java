@@ -13,7 +13,6 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -52,9 +51,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
      * <p>
      * 1. 检查请求路径是否在放行列表中，是则直接放行
      * 2. 从 Authorization header 中提取 Bearer Token
-     * 3. 解析并验证 Token 的有效性
+     * 3. 解析并验证 Token 的有效性，提取 userId 和 phone
      * 4. 从 Token 中提取用户名，加载用户信息
-     * 5. 将认证信息设置到 SecurityContext 中
+     * 5. 将认证信息（含 userId）设置到 SecurityContext 中
      * </p>
      *
      * @param request     HTTP 请求
@@ -80,17 +79,22 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             String token = extractToken(request);
 
             if (StringUtils.hasText(token)) {
-                // 解析 Token 获取用户名
-                String username = extractUsername(token);
+                // 解析 Token 获取用户名和 userId
+                Claims claims = parseToken(token);
+                String username = claims.getSubject();
+                Long userId = claims.get("userId", Long.class);
 
-                if (StringUtils.hasText(username) && SecurityContextHolder.getContext().getAuthentication() == null) {
+                if (StringUtils.hasText(username)
+                        && SecurityContextHolder.getContext().getAuthentication() == null) {
                     // 加载用户详细信息
                     UserDetails userDetails = userDetailsService.loadUserByUsername(username);
 
-                    // 创建认证令牌并设置到上下文中
+                    // 创建认证令牌，将 userId 存入 details
+                    // SecurityUtil.getCurrentUserId() 通过读取 details 获取 userId
                     UsernamePasswordAuthenticationToken authentication =
-                            new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-                    authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                            new UsernamePasswordAuthenticationToken(
+                                    userDetails, null, userDetails.getAuthorities());
+                    authentication.setDetails(userId);
 
                     SecurityContextHolder.getContext().setAuthentication(authentication);
                 }
@@ -122,22 +126,22 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     }
 
     /**
-     * 从 Token 中提取用户名
+     * 解析 JWT Token 并返回 Claims
      * <p>
-     * 使用 JJWT 库解析 JWT Token，验证签名并从 claims 中提取 subject（用户名）。
+     * 使用 JJWT 库解析 JWT Token，验证签名。
      * 使用 HMAC-SHA 算法，密钥为配置中的 jwt.secret。
      * </p>
      *
      * @param token JWT Token
-     * @return 用户名（subject）
+     * @return Token 中的 Claims（含 subject=phone, userId）
+     * @throws io.jsonwebtoken.JwtException Token 无效或已过期时抛出
      */
-    private String extractUsername(String token) {
+    private Claims parseToken(String token) {
         SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
-        Claims claims = Jwts.parser()
+        return Jwts.parser()
                 .verifyWith(key)
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
-        return claims.getSubject();
     }
 }

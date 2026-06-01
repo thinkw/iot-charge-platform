@@ -13,12 +13,14 @@ import com.iot.core.entity.DeviceLog;
 import com.iot.core.mapper.AlarmMapper;
 import com.iot.core.mapper.ChargerMapper;
 import com.iot.core.mapper.DeviceLogMapper;
+import com.iot.core.event.DeviceDataReportEvent;
 import com.iot.core.service.DeviceCommandSender;
 import com.iot.core.service.DeviceService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ScanOptions;
@@ -80,6 +82,7 @@ public class DeviceServiceImpl implements DeviceService {
     private final AlarmMapper alarmMapper;
     private final RedisTemplate<String, Object> redisTemplate;
     private final RocketMQTemplate rocketMQTemplate;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * 设备指令下发器，由 iot-access 模块实现 MQTT 下发。
@@ -345,6 +348,15 @@ public class DeviceServiceImpl implements DeviceService {
         if (charger != null) {
             updateChargerData(charger, data);
             chargerMapper.updateById(charger);
+        }
+
+        // 发布 Spring 事件，供 ChargeService 监听并推送 WebSocket 充电进度
+        if (charger != null) {
+            try {
+                eventPublisher.publishEvent(new DeviceDataReportEvent(sn, charger.getId(), data));
+            } catch (Exception e) {
+                log.warn("[数据上报] 发布 DeviceDataReportEvent 失败 - SN: {}, error: {}", sn, e.getMessage());
+            }
         }
     }
 

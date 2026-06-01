@@ -23,6 +23,9 @@ public class MqttEncoder extends MessageToByteEncoder<MqttMessage> {
             case CONNACK -> encodeConnack(msg, out);
             case PUBLISH -> encodePublish(msg, out);
             case PUBACK -> encodePuback(msg, out);
+            case PUBREC -> encodePubrec(msg, out);
+            case PUBREL -> encodePubrel(msg, out);
+            case PUBCOMP -> encodePubcomp(msg, out);
             case SUBACK -> encodeSuback(msg, out);
             case PINGRESP -> encodePingresp(out);
             default -> throw new IllegalArgumentException("不支持的编码报文类型: " + msg.getMessageType());
@@ -97,6 +100,45 @@ public class MqttEncoder extends MessageToByteEncoder<MqttMessage> {
      */
     private void encodePuback(MqttMessage msg, ByteBuf out) {
         out.writeByte(0x40);
+        out.writeByte(0x02);
+        out.writeShort(msg.getPacketId());
+    }
+
+    // ==================== PUBREC（QoS 2 第一步） ====================
+
+    /**
+     * PUBREC 报文格式：
+     * 固定头：0x50 0x02
+     * 可变头：Packet Identifier(2)
+     */
+    private void encodePubrec(MqttMessage msg, ByteBuf out) {
+        out.writeByte(0x50);
+        out.writeByte(0x02);
+        out.writeShort(msg.getPacketId());
+    }
+
+    // ==================== PUBREL（QoS 2 第二步） ====================
+
+    /**
+     * PUBREL 报文格式：
+     * 固定头：0x62 0x02（bit1 固定为 1，表示 QoS 1）
+     * 可变头：Packet Identifier(2)
+     */
+    private void encodePubrel(MqttMessage msg, ByteBuf out) {
+        out.writeByte(0x62);  // type=PUBREL(6)<<4, flags=0x02
+        out.writeByte(0x02);
+        out.writeShort(msg.getPacketId());
+    }
+
+    // ==================== PUBCOMP（QoS 2 第三步） ====================
+
+    /**
+     * PUBCOMP 报文格式：
+     * 固定头：0x70 0x02
+     * 可变头：Packet Identifier(2)
+     */
+    private void encodePubcomp(MqttMessage msg, ByteBuf out) {
+        out.writeByte(0x70);
         out.writeByte(0x02);
         out.writeShort(msg.getPacketId());
     }

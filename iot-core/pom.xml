@@ -51,6 +51,12 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
+        <!-- Spring Security（仅用于 PasswordEncoder，认证过滤器在 iot-api 中配置） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
         <!-- Redisson -->
         <dependency>
             <groupId>org.redisson</groupId>
