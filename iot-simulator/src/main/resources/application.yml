@@ -1,13 +1,17 @@
-server:
-  port: 9090
-
 spring:
   application:
     name: iot-simulator
+  main:
+    web-application-type: none   # 非 Web 模式
 
-# MQTT 连接配置
+# MQTT 连接配置（连接本地平台 MQTT 服务端）
 mqtt:
   broker: tcp://localhost:1883
-  client-id: simulator-${random.uuid}
   connection-timeout: 30
-  keep-alive-interval: 60
+  keep-alive-interval: 30
+
+# 日志级别
+logging:
+  level:
+    com.iot.simulator: INFO
+    org.eclipse.paho: WARN

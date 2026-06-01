@@ -15,7 +15,6 @@
       </profile>
     </annotationProcessing>
     <bytecodeTargetLevel>
-      <module name="iot-charge-platform" target="1.5" />
       <module name="sky-common" target="17" />
       <module name="sky-pojo" target="17" />
       <module name="sky-server" target="17" />

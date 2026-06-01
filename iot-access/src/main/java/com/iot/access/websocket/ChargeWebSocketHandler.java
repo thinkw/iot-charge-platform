@@ -1,5 +1,8 @@
 package com.iot.access.websocket;
 
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -7,70 +10,139 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+import java.net.URI;
+import java.util.Map;
+
 /**
  * 充电 WebSocket 处理器
  * <p>
- * 处理充电桩/管理端 WebSocket 连接的生命周期事件。
- * 负责建立连接、接收文本消息、处理连接关闭等操作。
+ * 处理 WebSocket 连接的生命周期事件，负责从 URL 参数中提取用户信息，
+ * 注册/注销 WebSocketSessionManager 会话，并处理客户端消息。
  * </p>
+ * <p>
+ * 连接 URL 格式：ws://host:9090/ws/charge?userId={userId}
+ * 推送消息格式：{"type":"CHARGE_PROGRESS"|"DEVICE_STATUS"|"ALARM", "data":{...}, "timestamp":...}
+ * </p>
+ *
+ * @author IoT Team
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class ChargeWebSocketHandler extends TextWebSocketHandler {
+
+    private final WebSocketSessionManager sessionManager;
 
     /**
      * 连接建立后回调
      * <p>
-     * 当客户端 WebSocket 连接成功建立时调用。
-     * 记录连接日志，后续可用于会话管理、在线状态维护。
+     * 从 URL 查询参数中提取 userId，注册会话到 WebSocketSessionManager。
+     * 如果未提供 userId 或解析失败，关闭连接并返回错误。
      * </p>
-     *
-     * @param session WebSocket 会话对象
      */
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
-        log.info("WebSocket 连接建立 - sessionId: {}", session.getId());
-        // TODO: 实现连接建立后的处理逻辑
-        // 1. 将 session 加入连接池管理
-        // 2. 发送欢迎消息或初始化配置
-        // 3. 更新设备在线状态
+        Long userId = extractUserId(session);
+        if (userId == null) {
+            log.warn("[WS] 连接缺少 userId 参数，关闭连接 - sessionId: {}", session.getId());
+            try {
+                session.close(CloseStatus.BAD_DATA);
+            } catch (Exception ignored) {
+            }
+            return;
+        }
+
+        sessionManager.register(userId, session);
+        log.info("[WS] 连接建立 - sessionId: {}, userId: {}", session.getId(), userId);
+
+        // 发送欢迎消息
+        Map<String, Object> welcomeMsg = Map.of(
+                "type", "CONNECTED",
+                "message", "连接成功",
+                "timestamp", System.currentTimeMillis()
+        );
+        try {
+            session.sendMessage(new TextMessage(JSONUtil.toJsonStr(welcomeMsg)));
+        } catch (Exception e) {
+            log.error("[WS] 发送欢迎消息失败 - sessionId: {}", session.getId(), e);
+        }
     }
 
     /**
      * 收到文本消息后回调
      * <p>
-     * 当接收到客户端发送的文本消息时调用。
-     * 解析消息内容并根据消息类型进行分发处理。
+     * 当前阶段客户端主要通过 WebSocket 接收推送，较少发送消息。
+     * 如需发送消息，格式为：{"type":"PING"} → 回复 PONG。
      * </p>
-     *
-     * @param session WebSocket 会话对象
-     * @param message 接收到的文本消息
      */
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-        log.info("收到 WebSocket 消息 - sessionId: {}, payload: {}", session.getId(), message.getPayload());
-        // TODO: 实现消息处理逻辑
-        // 1. 解析 JSON 消息
-        // 2. 根据消息类型调用对应业务逻辑
-        // 3. 如需回复，通过 session.sendMessage() 返回
+        String payload = message.getPayload();
+        log.debug("[WS] 收到消息 - sessionId: {}, payload: {}", session.getId(), payload);
+
+        try {
+            JSONObject json = JSONUtil.parseObj(payload);
+            String type = json.getStr("type");
+
+            // 心跳检测：客户端发送 PING，服务端回复 PONG
+            if ("PING".equals(type)) {
+                Map<String, Object> pong = Map.of(
+                        "type", "PONG",
+                        "timestamp", System.currentTimeMillis()
+                );
+                session.sendMessage(new TextMessage(JSONUtil.toJsonStr(pong)));
+            }
+        } catch (Exception e) {
+            log.warn("[WS] 消息处理异常 - sessionId: {}", session.getId(), e);
+        }
     }
 
     /**
      * 连接关闭后回调
      * <p>
-     * 当 WebSocket 连接关闭（正常关闭或异常断开）时调用。
-     * 清理会话信息、释放资源。
+     * 从 WebSocketSessionManager 中注销会话，清理资源。
      * </p>
-     *
-     * @param session WebSocket 会话对象
-     * @param status  关闭状态信息
      */
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        log.info("WebSocket 连接关闭 - sessionId: {}, status: {}", session.getId(), status);
-        // TODO: 实现连接关闭后的处理逻辑
-        // 1. 从连接池中移除 session
-        // 2. 更新设备在线状态
-        // 3. 触发离线通知
+        log.info("[WS] 连接关闭 - sessionId: {}, status: {}", session.getId(), status);
+        sessionManager.unregister(session);
+    }
+
+    /**
+     * 传输错误回调
+     */
+    @Override
+    public void handleTransportError(WebSocketSession session, Throwable exception) {
+        log.error("[WS] 传输错误 - sessionId: {}", session.getId(), exception);
+        sessionManager.unregister(session);
+    }
+
+    /**
+     * 从 WebSocket 会话 URL 中提取 userId
+     * <p>
+     * 解析 URL 查询参数，如 ws://host:9090/ws/charge?userId=123
+     * </p>
+     *
+     * @param session WebSocket 会话
+     * @return userId，解析失败返回 null
+     */
+    private Long extractUserId(WebSocketSession session) {
+        try {
+            URI uri = session.getUri();
+            if (uri == null || uri.getQuery() == null) {
+                return null;
+            }
+            String query = uri.getQuery();
+            for (String param : query.split("&")) {
+                String[] kv = param.split("=", 2);
+                if (kv.length == 2 && "userId".equals(kv[0])) {
+                    return Long.parseLong(kv[1]);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[WS] 解析 userId 失败 - sessionId: {}", session.getId(), e);
+        }
+        return null;
     }
 }

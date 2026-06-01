@@ -20,7 +20,7 @@ public class SimulatorConfig {
     @Value("${mqtt.broker}")
     private String brokerUrl;
 
-    @Value("${mqtt.client-id}")
+    @Value("${mqtt.client-id:simulator-default}")
     private String clientId;
 
     @Value("${mqtt.connection-timeout}")

@@ -33,6 +33,12 @@
             <artifactId>iot-core</artifactId>
         </dependency>
 
+        <!-- Internal: iot-access（Netty MQTT Server + WebSocket） -->
+        <dependency>
+            <groupId>com.iot</groupId>
+            <artifactId>iot-access</artifactId>
+        </dependency>
+
         <!-- Spring Boot Web -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
