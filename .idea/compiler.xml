@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CompilerConfiguration">
+    <annotationProcessing>
+      <profile default="true" name="Default" enabled="true" />
+      <profile name="Maven default annotation processors profile" enabled="true">
+        <sourceOutputDir name="target/generated-sources/annotations" />
+        <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
+        <outputRelativeToContentRoot value="true" />
+        <module name="iot-access" />
+        <module name="iot-simulator" />
+        <module name="iot-common" />
+        <module name="iot-api" />
+        <module name="iot-core" />
+      </profile>
+    </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="iot-charge-platform" target="1.5" />
+      <module name="sky-common" target="17" />
+      <module name="sky-pojo" target="17" />
+      <module name="sky-server" target="17" />
+    </bytecodeTargetLevel>
+  </component>
+  <component name="JavacSettings">
+    <option name="ADDITIONAL_OPTIONS_OVERRIDE">
+      <module name="iot-access" options="-parameters" />
+      <module name="iot-api" options="-parameters" />
+      <module name="iot-common" options="-parameters" />
+      <module name="iot-core" options="-parameters" />
+      <module name="iot-simulator" options="-parameters" />
+      <module name="sky-common" options="-parameters" />
+      <module name="sky-pojo" options="-parameters" />
+      <module name="sky-server" options="-parameters" />
+    </option>
+  </component>
+</project>

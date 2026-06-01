@@ -1,0 +1,6 @@
+# 项目排除路径
+/iot-access/target/
+/iot-api/target/
+/iot-common/target/
+/iot-core/target/
+/iot-simulator/target/

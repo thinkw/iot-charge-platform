@@ -1,0 +1,13 @@
+server:
+  port: 9090
+
+spring:
+  application:
+    name: iot-simulator
+
+# MQTT 连接配置
+mqtt:
+  broker: tcp://localhost:1883
+  client-id: simulator-${random.uuid}
+  connection-timeout: 30
+  keep-alive-interval: 60
