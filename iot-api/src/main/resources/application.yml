@@ -33,5 +33,5 @@ rocketmq:
 
 # JWT 配置
 jwt:
-  secret: iot-charge-platform-secret-key
+  secret: iot-charge-platform-secret-keyiot-charge-platform-secret-key
   expiration: 86400000

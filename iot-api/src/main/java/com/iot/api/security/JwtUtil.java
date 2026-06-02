@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.List;
 
 /**
  * JWT Token 工具类
@@ -36,28 +37,42 @@ public class JwtUtil {
     /**
      * 生成 JWT Token
      * <p>
-     * subject = phone，claims 中包含 userId，签名算法为 HMAC-SHA256。
+     * subject = phone，claims 中包含 userId 和 roles（角色编码列表），签名算法为 HMAC-SHA256。
      * </p>
+     *
+     * @param userId 用户ID
+     * @param phone  用户手机号
+     * @param roles  用户角色编码列表（如 ["ROLE_USER", "ROLE_ADMIN"]），可选
+     * @return JWT Token 字符串
+     */
+    public String generateToken(Long userId, String phone, List<String> roles) {
+        SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
+        Date now = new Date();
+        Date expiration = new Date(now.getTime() + jwtExpiration);
+
+        var builder = Jwts.builder()
+                .subject(phone)
+                .claim("userId", userId)
+                .claim("roles", roles != null ? roles : List.of("ROLE_USER"))
+                .issuedAt(now)
+                .expiration(expiration)
+                .signWith(key);
+
+        String token = builder.compact();
+
+        log.debug("[JWT] 生成 Token 成功 - userId: {}, phone: {}, roles: {}", userId, phone, roles);
+        return token;
+    }
+
+    /**
+     * 生成 JWT Token（兼容旧调用，默认 ROLE_USER）
      *
      * @param userId 用户ID
      * @param phone  用户手机号
      * @return JWT Token 字符串
      */
     public String generateToken(Long userId, String phone) {
-        SecretKey key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
-        Date now = new Date();
-        Date expiration = new Date(now.getTime() + jwtExpiration);
-
-        String token = Jwts.builder()
-                .subject(phone)
-                .claim("userId", userId)
-                .issuedAt(now)
-                .expiration(expiration)
-                .signWith(key)
-                .compact();
-
-        log.debug("[JWT] 生成 Token 成功 - userId: {}, phone: {}", userId, phone);
-        return token;
+        return generateToken(userId, phone, List.of("ROLE_USER"));
     }
 
     /**

@@ -56,6 +56,7 @@ public class SecurityConfig {
             // 配置路径权限
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/user/register", "/api/user/login").permitAll()
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().permitAll()
             )

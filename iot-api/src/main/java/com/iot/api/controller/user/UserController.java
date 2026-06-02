@@ -52,8 +52,8 @@ public class UserController {
         // 调用注册服务
         LoginResponse response = userService.register(request);
 
-        // 注册成功，生成 JWT Token
-        String token = jwtUtil.generateToken(response.getUserId(), response.getPhone());
+        // 注册成功，生成 JWT Token（包含角色信息）
+        String token = jwtUtil.generateToken(response.getUserId(), response.getPhone(), response.getRoles());
         response.setToken(token);
 
         return Result.success(response);
@@ -75,8 +75,8 @@ public class UserController {
         // 调用登录服务
         LoginResponse response = userService.login(request);
 
-        // 登录成功，生成 JWT Token
-        String token = jwtUtil.generateToken(response.getUserId(), response.getPhone());
+        // 登录成功，生成 JWT Token（包含角色信息）
+        String token = jwtUtil.generateToken(response.getUserId(), response.getPhone(), response.getRoles());
         response.setToken(token);
 
         return Result.success(response);

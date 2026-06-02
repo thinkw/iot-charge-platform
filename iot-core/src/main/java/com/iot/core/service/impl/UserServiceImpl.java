@@ -7,6 +7,7 @@ import com.iot.core.dto.request.RegisterRequest;
 import com.iot.core.dto.response.LoginResponse;
 import com.iot.core.dto.response.UserInfoVO;
 import com.iot.core.entity.User;
+import com.iot.core.mapper.RoleMapper;
 import com.iot.core.mapper.UserMapper;
 import com.iot.core.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 用户服务实现类
@@ -32,6 +34,7 @@ import java.time.LocalDateTime;
 public class UserServiceImpl implements UserService {
 
     private final UserMapper userMapper;
+    private final RoleMapper roleMapper;
     private final PasswordEncoder passwordEncoder;
 
     /**
@@ -63,11 +66,18 @@ public class UserServiceImpl implements UserService {
 
         log.info("[用户注册] userId: {}, phone: {}", user.getId(), user.getPhone());
 
-        // 3. 返回注册结果
+        // 3. 查询角色（新注册用户默认 ROLE_USER）
+        List<String> roles = roleMapper.findRoleCodesByUserId(user.getId());
+        if (roles.isEmpty()) {
+            roles = List.of("ROLE_USER");
+        }
+
+        // 4. 返回注册结果
         return LoginResponse.builder()
                 .userId(user.getId())
                 .phone(user.getPhone())
                 .nickname(user.getNickname())
+                .roles(roles)
                 .build();
     }
 
@@ -101,13 +111,20 @@ public class UserServiceImpl implements UserService {
         user.setLastLogin(LocalDateTime.now());
         userMapper.updateById(user);
 
-        log.info("[用户登录] userId: {}, phone: {}", user.getId(), user.getPhone());
+        // 5. 查询角色
+        List<String> roles = roleMapper.findRoleCodesByUserId(user.getId());
+        if (roles.isEmpty()) {
+            roles = List.of("ROLE_USER");
+        }
 
-        // 5. 返回登录结果
+        log.info("[用户登录] userId: {}, phone: {}, roles: {}", user.getId(), user.getPhone(), roles);
+
+        // 6. 返回登录结果
         return LoginResponse.builder()
                 .userId(user.getId())
                 .phone(user.getPhone())
                 .nickname(user.getNickname())
+                .roles(roles)
                 .build();
     }
 

@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 /**
  * 登录响应
  * <p>
@@ -30,4 +32,7 @@ public class LoginResponse {
 
     /** 昵称 */
     private String nickname;
+
+    /** 用户角色编码列表（如 ["ROLE_USER", "ROLE_ADMIN"]） */
+    private List<String> roles;
 }
