@@ -103,7 +103,7 @@ public class DeviceServiceImpl implements DeviceService {
     @Override
     public boolean authenticateDevice(String sn, String secret) {
         if (sn == null || sn.isBlank() || secret == null || secret.isBlank()) {
-            log.warn("[设备鉴权] SN或密钥为空");
+            log.warn("[设备鉴权] SN或密钥为空 - SN: {}, secret: {}", sn, secret);
             return false;
         }
 
@@ -122,7 +122,8 @@ public class DeviceServiceImpl implements DeviceService {
         boolean authenticated = expectedSecret.equals(secret);
 
         if (!authenticated) {
-            log.warn("[设备鉴权] 密钥验证失败 - SN: {}", sn);
+            log.warn("[设备鉴权] 密钥验证失败 - SN: {}, expected: '{}' (len={}), actual: '{}' (len={})",
+                    sn, expectedSecret, expectedSecret.length(), secret, secret.length());
             return false;
         }
 

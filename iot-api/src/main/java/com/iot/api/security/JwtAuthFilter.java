@@ -10,9 +10,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -20,6 +19,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import javax.crypto.SecretKey;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -40,20 +40,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     @Value("${jwt.secret}")
     private String jwtSecret;
 
-    private final UserDetailsService userDetailsService;
-
-    public JwtAuthFilter(UserDetailsService userDetailsService) {
-        this.userDetailsService = userDetailsService;
-    }
-
     /**
      * 过滤器核心逻辑
      * <p>
      * 1. 检查请求路径是否在放行列表中，是则直接放行
      * 2. 从 Authorization header 中提取 Bearer Token
-     * 3. 解析并验证 Token 的有效性，提取 userId 和 phone
-     * 4. 从 Token 中提取用户名，加载用户信息
-     * 5. 将认证信息（含 userId）设置到 SecurityContext 中
+     * 3. 解析 JWT Token，验证签名和有效期
+     * 4. 从 Token Claims 中提取 userId、phone 和 roles（无需查 DB）
+     * 5. 构建认证令牌，将 userId 存入 details 供 SecurityUtil 提取
+     * </p>
+     * <p>
+     * 角色信息从 JWT Token 直接获取，避免每次请求都查询数据库。
+     * Token 签名保证了 roles 不可篡改，角色变更通过 Token 过期自然生效。
      * </p>
      *
      * @param request     HTTP 请求
@@ -79,21 +77,28 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             String token = extractToken(request);
 
             if (StringUtils.hasText(token)) {
-                // 解析 Token 获取用户名和 userId
+                // 解析 Token 获取 userId、phone 和 roles
                 Claims claims = parseToken(token);
-                String username = claims.getSubject();
+                String phone = claims.getSubject();
                 Long userId = claims.get("userId", Long.class);
 
-                if (StringUtils.hasText(username)
+                if (StringUtils.hasText(phone) && userId != null
                         && SecurityContextHolder.getContext().getAuthentication() == null) {
-                    // 加载用户详细信息
-                    UserDetails userDetails = userDetailsService.loadUserByUsername(username);
 
-                    // 创建认证令牌，将 userId 存入 details
-                    // SecurityUtil.getCurrentUserId() 通过读取 details 获取 userId
+                    // 从 JWT Token Claims 中直接提取角色，无需查询数据库
+                    @SuppressWarnings("unchecked")
+                    List<String> roles = claims.get("roles", List.class);
+                    if (roles == null || roles.isEmpty()) {
+                        roles = List.of("ROLE_USER");
+                    }
+                    List<SimpleGrantedAuthority> authorities = roles.stream()
+                            .map(SimpleGrantedAuthority::new)
+                            .toList();
+
+                    // 创建认证令牌：principal=phone，authorities=角色列表
                     UsernamePasswordAuthenticationToken authentication =
-                            new UsernamePasswordAuthenticationToken(
-                                    userDetails, null, userDetails.getAuthorities());
+                            new UsernamePasswordAuthenticationToken(phone, null, authorities);
+                    // 将 userId 存入 details，SecurityUtil.getCurrentUserId() 从中提取
                     authentication.setDetails(userId);
 
                     SecurityContextHolder.getContext().setAuthentication(authentication);
@@ -101,7 +106,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             }
         } catch (Exception e) {
             log.warn("JWT Token 认证失败: {}", e.getMessage());
-            // Token 无效时不清空上下文，让 AuthenticationEntryPoint 处理即可
+            // Token 无效/过期时清理残留的认证上下文，防止旧认证信息泄露
+            SecurityContextHolder.clearContext();
         }
 
         filterChain.doFilter(request, response);

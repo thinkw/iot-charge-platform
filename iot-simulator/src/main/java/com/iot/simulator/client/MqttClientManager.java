@@ -58,6 +58,13 @@ public class MqttClientManager {
                     .temperature(25.0)
                     .build();
 
+            // 如果同 SN 的充电桩已在运行，先停止旧的再启动新的
+            VirtualCharger existing = chargers.get(sn);
+            if (existing != null) {
+                log.info("{} 已在运行，先停止旧实例", sn);
+                existing.stop();
+            }
+
             try {
                 charger.start();
                 chargers.put(sn, charger);

@@ -489,6 +489,7 @@ CREATE TABLE alarm (
     handle_time DATETIME     DEFAULT NULL            COMMENT '处理时间',
     handle_note TEXT         DEFAULT NULL            COMMENT '处理备注',
     create_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
     INDEX idx_charger_id (charger_id),
     INDEX idx_alarm_level (alarm_level),
@@ -525,6 +526,7 @@ CREATE TABLE permission (
     path        VARCHAR(200) DEFAULT NULL            COMMENT '路由路径/接口路径',
     sort        INT          NOT NULL DEFAULT 0      COMMENT '排序',
     create_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
     UNIQUE INDEX uk_code (code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='权限表';
@@ -568,6 +570,7 @@ CREATE TABLE operation_log (
     error_msg   TEXT         DEFAULT NULL            COMMENT '错误信息',
     cost_time   BIGINT       DEFAULT NULL            COMMENT '耗时(ms)',
     create_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
     INDEX idx_user_id (user_id),
     INDEX idx_create_time (create_time)

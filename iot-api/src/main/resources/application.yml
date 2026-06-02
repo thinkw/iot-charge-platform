@@ -23,7 +23,7 @@ mybatis-plus:
   type-aliases-package: com.iot.core.entity
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
 
 # RocketMQ 配置
 rocketmq:

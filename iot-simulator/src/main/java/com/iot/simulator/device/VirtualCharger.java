@@ -131,7 +131,8 @@ public class VirtualCharger {
      */
     private void connectMqtt() throws MqttException {
         String clientId = sn + "-" + System.currentTimeMillis();
-        mqttClient = new MqttAsyncClient(brokerUrl, clientId);
+        // 使用内存持久化，避免在根目录生成 CHARGER-XXX-xxxxx-tcplocalhost1883 空文件夹
+        mqttClient = new MqttAsyncClient(brokerUrl, clientId, new org.eclipse.paho.client.mqttv3.persist.MemoryPersistence());
 
         MqttConnectOptions options = new MqttConnectOptions();
         options.setUserName(sn);          // username = SN

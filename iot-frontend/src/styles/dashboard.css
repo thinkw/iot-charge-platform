@@ -1,0 +1,47 @@
+/**
+ * 大屏专用样式
+ * 亮色简洁风格，数字突出显示
+ */
+
+/* 全局数字等宽字体，适合数字频繁变化的场景 */
+.dashboard-view {
+  font-variant-numeric: tabular-nums;
+}
+
+/* el-card 统一标题样式 */
+.dashboard-view .el-card__header {
+  padding: 14px 20px;
+  border-bottom: 1px solid #ebeef5;
+  background: #fafbfc;
+}
+
+.dashboard-view .el-card__body {
+  padding: 16px 20px;
+}
+
+/* 滚动条美化 */
+.dashboard-view ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.dashboard-view ::-webkit-scrollbar-track {
+  background: #f0f0f0;
+  border-radius: 3px;
+}
+
+.dashboard-view ::-webkit-scrollbar-thumb {
+  background: #c0c4cc;
+  border-radius: 3px;
+}
+
+.dashboard-view ::-webkit-scrollbar-thumb:hover {
+  background: #909399;
+}
+
+/* el-table 在小屏下优化 */
+@media (max-width: 900px) {
+  .status-cards {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}

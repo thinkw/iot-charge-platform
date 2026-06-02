@@ -1,0 +1,1394 @@
+{
+  "info": {
+    "name": "IoT充电桩智能运营平台 API",
+    "description": "# IoT充电桩智能运营平台 接口测试集合\n\n## 使用说明\n\n1. 导入后先在 Collection Variables 中配置 baseUrl（默认 http://localhost:8080）\n2. 先执行「用户端 > 用户认证 > 用户登录」获取 Token\n3. 登录成功后 Token 会自动存入 Collection 变量 `token`，后续接口自动携带\n4. 管理端接口需要 ADMIN 角色的用户登录后才能访问\n\n## 环境变量\n\n| 变量名 | 默认值 | 说明 |\n|--------|--------|------|\n| baseUrl | http://localhost:8080 | API服务地址 |\n| token | (自动填充) | JWT认证令牌 |\n| orderNo | (自动填充) | 订单编号 |\n\n## 接口分类\n\n- 📱 用户端：注册登录、站点查询、充电控制、订单管理、预约管理\n- 🔧 运营后台：站点管理、充电桩管理、订单管理、计费规则、告警管理、数据统计",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "📱 用户端",
+      "item": [
+        {
+          "name": "用户认证",
+          "item": [
+            {
+              "name": "用户注册",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "    console.log('注册成功:', pm.response.json().data);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"phone\": \"13800138000\",\n  \"password\": \"123456\",\n  \"nickname\": \"测试用户\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/user/register",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "user", "register"]
+                },
+                "description": "手机号注册新用户。\n\n请求体：\n- phone: 手机号（必填）\n- password: 密码（必填）\n- nickname: 昵称（选填）"
+              },
+              "response": []
+            },
+            {
+              "name": "用户登录",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "    const data = pm.response.json().data;",
+                      "    pm.collectionVariables.set('token', data.token);",
+                      "    pm.collectionVariables.set('userId', data.userId);",
+                      "    console.log('登录成功, Token已设置');",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"phone\": \"13800138000\",\n  \"password\": \"123456\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/user/login",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "user", "login"]
+                },
+                "description": "手机号+密码登录，成功后自动设置 Collection Token。"
+              },
+              "response": []
+            },
+            {
+              "name": "获取用户信息",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "    console.log('用户信息:', pm.response.json().data);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/user/info",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "user", "info"]
+                },
+                "description": "获取当前登录用户的详细信息。需要登录。"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "站点查询",
+          "item": [
+            {
+              "name": "充电站列表",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "    const stations = pm.response.json().data.records;",
+                      "    if (stations && stations.length > 0) {",
+                      "        pm.collectionVariables.set('stationId', stations[0].id);",
+                      "        console.log('站点列表获取成功, 共' + stations.length + '个站点');",
+                      "    }",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/station/list?page=1&size=20&sortBy=price",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "station", "list"],
+                  "query": [
+                    {"key": "page", "value": "1"},
+                    {"key": "size", "value": "20"},
+                    {"key": "name", "value": "", "disabled": true},
+                    {"key": "sortBy", "value": "price"},
+                    {"key": "latitude", "value": "", "disabled": true},
+                    {"key": "longitude", "value": "", "disabled": true}
+                  ]
+                },
+                "description": "获取充电站列表，支持分页、排序和名称搜索。\n\n排序方式：\n- price: 按最低电价\n- distance: 按距离（需传经纬度）\n- available: 按空闲桩数"
+              },
+              "response": []
+            },
+            {
+              "name": "充电站详情",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/station/{{stationId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "station", "{{stationId}}"]
+                },
+                "description": "获取充电站详细信息及该站下的充电桩列表。"
+              },
+              "response": []
+            },
+            {
+              "name": "充电桩详情",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/charger/1",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "charger", "1"]
+                },
+                "description": "获取单个充电桩的详细信息。"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "充电控制",
+          "item": [
+            {
+              "name": "扫码启桩",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "    const orderNo = pm.response.json().data;",
+                      "    if (typeof orderNo === 'string') {",
+                      "        pm.collectionVariables.set('orderNo', orderNo);",
+                      "        console.log('启桩成功, 订单号:', orderNo);",
+                      "    } else {",
+                      "        // data可能是对象",
+                      "        const no = pm.response.json().data.orderNo;",
+                      "        if (no) pm.collectionVariables.set('orderNo', no);",
+                      "        console.log('启桩成功:', pm.response.json().data);",
+                      "    }",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"chargerId\": 1\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/charge/start",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "charge", "start"]
+                },
+                "description": "扫码启动充电。\n\n前置条件：\n- 充电桩状态为「空闲」\n- 充电桩未被其他用户锁定\n\n成功后返回订单编号，自动存入 `orderNo` 变量。"
+              },
+              "response": []
+            },
+            {
+              "name": "充电实时状态",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/charge/status/{{orderNo}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "charge", "status", "{{orderNo}}"]
+                },
+                "description": "获取充电实时状态：电压、电流、功率、已充电量、实时费用。\n\n使用扫码启桩返回的订单编号。"
+              },
+              "response": []
+            },
+            {
+              "name": "结束充电",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "    console.log('充电已结束:', pm.response.json());",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"orderNo\": \"{{orderNo}}\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/charge/stop",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "charge", "stop"]
+                },
+                "description": "手动结束当前充电。\n\n成功后会计算费用并生成最终订单。"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "订单管理",
+          "item": [
+            {
+              "name": "订单列表",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/order/list?page=1&size=20",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "order", "list"],
+                  "query": [
+                    {"key": "page", "value": "1"},
+                    {"key": "size", "value": "20"},
+                    {"key": "orderStatus", "value": "", "disabled": true},
+                    {"key": "payStatus", "value": "", "disabled": true}
+                  ]
+                },
+                "description": "获取当前用户的订单列表。\n\n筛选参数（可选）：\n- orderStatus: 订单状态（1-充电中, 2-已完成, 3-已取消, 4-异常）\n- payStatus: 支付状态（0-未支付, 1-已支付, 2-已退款）"
+              },
+              "response": []
+            },
+            {
+              "name": "订单详情",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/order/1",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "order", "1"]
+                },
+                "description": "获取指定订单的详细信息，包含充电时间、电量、费用明细。"
+              },
+              "response": []
+            },
+            {
+              "name": "支付订单",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"orderNo\": \"{{orderNo}}\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/order/pay",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "order", "pay"]
+                },
+                "description": "模拟支付订单（模拟微信/支付宝支付）。\n\n前置条件：订单状态为「已完成」且「未支付」。"
+              },
+              "response": []
+            },
+            {
+              "name": "申请退款",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"orderNo\": \"{{orderNo}}\",\n  \"reason\": \"充电异常，申请退款\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/order/refund",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "order", "refund"]
+                },
+                "description": "申请订单退款。\n\n前置条件：订单已支付。"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "预约管理",
+          "item": [
+            {
+              "name": "创建预约",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "    console.log('预约创建成功:', pm.response.json().data);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"chargerId\": 1,\n  \"stationId\": 1,\n  \"reserveDate\": \"2026-06-03\",\n  \"startTime\": \"10:00\",\n  \"endTime\": \"12:00\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/reservation/create",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "reservation", "create"]
+                },
+                "description": "预约充电桩指定时段。\n\n请求体：\n- chargerId: 充电桩ID（必填）\n- stationId: 充电站ID（必填）\n- reserveDate: 预约日期 yyyy-MM-dd（必填）\n- startTime: 开始时间 HH:mm（必填）\n- endTime: 结束时间 HH:mm（必填）"
+              },
+              "response": []
+            },
+            {
+              "name": "取消预约",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reservationId\": 1\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/reservation/cancel",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "reservation", "cancel"]
+                },
+                "description": "取消已创建的预约订单。"
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "🔧 运营后台",
+      "item": [
+        {
+          "name": "充电站管理",
+          "item": [
+            {
+              "name": "充电站列表",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/station/list?page=1&size=20",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "station", "list"],
+                  "query": [
+                    {"key": "page", "value": "1"},
+                    {"key": "size", "value": "20"},
+                    {"key": "name", "value": "", "disabled": true},
+                    {"key": "status", "value": "", "disabled": true}
+                  ]
+                },
+                "description": "分页查询充电站列表，支持按名称模糊搜索和状态筛选。\n\n需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "充电站详情",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/station/1",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "station", "1"]
+                },
+                "description": "获取充电站详情。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "新增充电站",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"测试充电站\",\n  \"address\": \"广东省广州市天河区体育西路100号\",\n  \"longitude\": 113.321,\n  \"latitude\": 23.125,\n  \"businessHours\": \"00:00-24:00\",\n  \"contact\": \"020-88888888\",\n  \"status\": 1\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/station",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "station"]
+                },
+                "description": "新增充电站。需要 ADMIN 角色。\n\nstatus: 0-暂停营业, 1-营业中, 2-维护中"
+              },
+              "response": []
+            },
+            {
+              "name": "修改充电站",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"测试充电站（已更新）\",\n  \"address\": \"广东省广州市天河区体育西路100号\",\n  \"longitude\": 113.321,\n  \"latitude\": 23.125,\n  \"businessHours\": \"06:00-22:00\",\n  \"contact\": \"020-88888888\",\n  \"status\": 1\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/station/2",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "station", "2"]
+                },
+                "description": "修改充电站信息。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "修改充电站状态",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/station/1/status?status=2",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "station", "1", "status"],
+                  "query": [
+                    {"key": "status", "value": "2"}
+                  ]
+                },
+                "description": "修改充电站营业状态。\nstatus: 0-暂停营业, 1-营业中, 2-维护中"
+              },
+              "response": []
+            },
+            {
+              "name": "删除充电站",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/station/2",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "station", "2"]
+                },
+                "description": "删除充电站。有关联充电桩时无法删除。需要 ADMIN 角色。"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "充电桩管理",
+          "item": [
+            {
+              "name": "充电桩列表",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/charger/list?page=1&size=20",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "charger", "list"],
+                  "query": [
+                    {"key": "page", "value": "1"},
+                    {"key": "size", "value": "20"},
+                    {"key": "stationId", "value": "", "disabled": true},
+                    {"key": "sn", "value": "", "disabled": true},
+                    {"key": "status", "value": "", "disabled": true}
+                  ]
+                },
+                "description": "分页查询充电桩列表，支持按充电站、SN、状态筛选。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "充电桩详情",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/charger/1",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "charger", "1"]
+                },
+                "description": "获取充电桩详情。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "新增充电桩",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sn\": \"CHARGER-TEST-001\",\n  \"name\": \"1号直流快充桩\",\n  \"stationId\": 1,\n  \"power\": 60.00,\n  \"status\": 0\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/charger",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "charger"]
+                },
+                "description": "新增充电桩。SN必须唯一。需要 ADMIN 角色。\n\nstatus: 0-离线, 1-空闲, 2-充电中, 3-故障, 4-锁定"
+              },
+              "response": []
+            },
+            {
+              "name": "修改充电桩",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sn\": \"CHARGER-TEST-001\",\n  \"name\": \"1号直流快充桩（已更新）\",\n  \"stationId\": 1,\n  \"power\": 120.00\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/charger/1",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "charger", "1"]
+                },
+                "description": "修改充电桩信息（SN和stationId不允许修改）。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "启用充电桩",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/charger/1/status?status=1",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "charger", "1", "status"],
+                  "query": [
+                    {"key": "status", "value": "1"}
+                  ]
+                },
+                "description": "启用充电桩（状态变为空闲）。status: 0-禁用, 1-启用"
+              },
+              "response": []
+            },
+            {
+              "name": "禁用充电桩",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/charger/1/status?status=0",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "charger", "1", "status"],
+                  "query": [
+                    {"key": "status", "value": "0"}
+                  ]
+                },
+                "description": "禁用充电桩（状态变为离线）。"
+              },
+              "response": []
+            },
+            {
+              "name": "删除充电桩",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/charger/2",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "charger", "2"]
+                },
+                "description": "删除充电桩。有进行中订单时无法删除。需要 ADMIN 角色。"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "订单管理",
+          "item": [
+            {
+              "name": "全量订单列表",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/order/list?page=1&size=20",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "order", "list"],
+                  "query": [
+                    {"key": "page", "value": "1"},
+                    {"key": "size", "value": "20"},
+                    {"key": "userId", "value": "", "disabled": true},
+                    {"key": "chargerId", "value": "", "disabled": true},
+                    {"key": "stationId", "value": "", "disabled": true},
+                    {"key": "orderStatus", "value": "", "disabled": true},
+                    {"key": "payStatus", "value": "", "disabled": true},
+                    {"key": "startTime", "value": "", "disabled": true},
+                    {"key": "endTime", "value": "", "disabled": true}
+                  ]
+                },
+                "description": "管理员查看全量订单，支持多条件筛选。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "订单详情（管理员）",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/order/1",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "order", "1"]
+                },
+                "description": "管理员查看任意订单详情，不受userId限制。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "手动结束异常订单",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"orderNo\": \"{{orderNo}}\",\n  \"reason\": \"设备离线超时，手动结束\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/order/end",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "order", "end"]
+                },
+                "description": "手动结束异常充电订单，充电桩恢复为空闲。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "管理员退款",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"orderNo\": \"{{orderNo}}\",\n  \"reason\": \"运营后台手动退款\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/order/refund",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "order", "refund"]
+                },
+                "description": "管理员直接对已支付订单进行退款。需要 ADMIN 角色。"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "计费规则管理",
+          "item": [
+            {
+              "name": "计费规则列表",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/pricing/list?page=1&size=20",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "pricing", "list"],
+                  "query": [
+                    {"key": "page", "value": "1"},
+                    {"key": "size", "value": "20"},
+                    {"key": "stationId", "value": "", "disabled": true},
+                    {"key": "status", "value": "", "disabled": true}
+                  ]
+                },
+                "description": "分页查询计费规则，支持按站点和状态筛选。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "计费规则详情",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/pricing/1",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "pricing", "1"]
+                },
+                "description": "获取计费规则详情。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "新增基础电价规则",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"基础电价\",\n  \"stationId\": 0,\n  \"ruleType\": 1,\n  \"electricityPrice\": 0.8000,\n  \"servicePrice\": 0.4000,\n  \"priority\": 0,\n  \"status\": 1\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/pricing",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "pricing"]
+                },
+                "description": "新增计费规则。需要 ADMIN 角色。\n\nruleType: 1-基础电价, 2-峰谷电价\nstationId: 0表示全局规则"
+              },
+              "response": []
+            },
+            {
+              "name": "新增峰谷电价规则",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"高峰电价\",\n  \"stationId\": 1,\n  \"ruleType\": 2,\n  \"startTime\": \"14:00\",\n  \"endTime\": \"17:00\",\n  \"electricityPrice\": 1.2000,\n  \"servicePrice\": 0.6000,\n  \"priority\": 10,\n  \"status\": 1\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/pricing",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "pricing"]
+                },
+                "description": "新增峰谷电价规则。需要 ADMIN 角色。\n\nruleType=2时需要传 startTime 和 endTime。"
+              },
+              "response": []
+            },
+            {
+              "name": "修改规则状态",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/pricing/1/status?status=0",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "pricing", "1", "status"],
+                  "query": [
+                    {"key": "status", "value": "0"}
+                  ]
+                },
+                "description": "启用/禁用计费规则。status: 0-禁用, 1-启用"
+              },
+              "response": []
+            },
+            {
+              "name": "删除计费规则",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/pricing/1",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "pricing", "1"]
+                },
+                "description": "删除计费规则（物理删除）。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "站点计费规则查询",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/pricing/station/1",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "pricing", "station", "1"]
+                },
+                "description": "获取指定充电站的所有启用计费规则。需要 ADMIN 角色。"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "告警管理",
+          "item": [
+            {
+              "name": "告警列表",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/alarm/list?page=1&size=20",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "alarm", "list"],
+                  "query": [
+                    {"key": "page", "value": "1"},
+                    {"key": "size", "value": "20"},
+                    {"key": "chargerId", "value": "", "disabled": true},
+                    {"key": "stationId", "value": "", "disabled": true},
+                    {"key": "alarmType", "value": "", "disabled": true},
+                    {"key": "alarmLevel", "value": "", "disabled": true},
+                    {"key": "status", "value": "", "disabled": true},
+                    {"key": "startTime", "value": "", "disabled": true},
+                    {"key": "endTime", "value": "", "disabled": true}
+                  ]
+                },
+                "description": "分页查询告警列表，支持按充电桩、类型、级别、状态、时间范围筛选。需要 ADMIN 角色。\n\nalarmType: OVER_TEMP/OVER_VOLT/UNDER_VOLT/SHORT_CIRCUIT/LEAKAGE/OFFLINE/COMM_ERROR\nalarmLevel: 1-一般, 2-重要, 3-紧急\nstatus: 0-未处理, 1-已处理"
+              },
+              "response": []
+            },
+            {
+              "name": "未处理告警列表",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/alarm/list?page=1&size=20&status=0",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "alarm", "list"],
+                  "query": [
+                    {"key": "page", "value": "1"},
+                    {"key": "size", "value": "20"},
+                    {"key": "status", "value": "0"}
+                  ]
+                },
+                "description": "查询所有未处理的告警。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "紧急告警列表",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/alarm/list?page=1&size=20&alarmLevel=3&status=0",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "alarm", "list"],
+                  "query": [
+                    {"key": "page", "value": "1"},
+                    {"key": "size", "value": "20"},
+                    {"key": "alarmLevel", "value": "3"},
+                    {"key": "status", "value": "0"}
+                  ]
+                },
+                "description": "查询所有未处理的紧急告警。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "告警详情",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/alarm/1",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "alarm", "1"]
+                },
+                "description": "获取告警详情。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "处理告警",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"alarmId\": 1,\n  \"handleNote\": \"已派维修人员现场处理，更换故障模块后恢复正常\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/alarm/handle",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "alarm", "handle"]
+                },
+                "description": "处理告警，标记为已处理并添加备注。已处理的告警不允许重复处理。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "告警统计",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/alarm/statistics",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "alarm", "statistics"]
+                },
+                "description": "获取告警统计数据：未处理数量、按类型分布、按级别分布。需要 ADMIN 角色。"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "数据统计",
+          "item": [
+            {
+              "name": "实时大屏数据",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/statistics/dashboard",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "statistics", "dashboard"]
+                },
+                "description": "获取运营实时大屏数据：在线设备数/在线率、充电中数量、今日订单数、今日营收、未处理告警数。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "趋势统计",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/statistics/trend?period=day&startDate=2026-05-26&endDate=2026-06-02",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "statistics", "trend"],
+                  "query": [
+                    {"key": "period", "value": "day"},
+                    {"key": "startDate", "value": "2026-05-26"},
+                    {"key": "endDate", "value": "2026-06-02"}
+                  ]
+                },
+                "description": "获取订单量、充电量、营收的趋势统计（按日聚合）。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "站点排名（按订单量）",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/statistics/station-rank?type=order&topN=10",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "statistics", "station-rank"],
+                  "query": [
+                    {"key": "type", "value": "order"},
+                    {"key": "topN", "value": "10"}
+                  ]
+                },
+                "description": "按订单量对充电站进行排名。type: order/energy/revenue。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "站点排名（按营收）",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/statistics/station-rank?type=revenue&topN=10",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "statistics", "station-rank"],
+                  "query": [
+                    {"key": "type", "value": "revenue"},
+                    {"key": "topN", "value": "10"}
+                  ]
+                },
+                "description": "按营收对充电站进行排名。需要 ADMIN 角色。"
+              },
+              "response": []
+            },
+            {
+              "name": "故障统计",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/statistics/fault",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "admin", "statistics", "fault"]
+                },
+                "description": "获取设备故障统计：各类型故障数量分布、总体故障率。需要 ADMIN 角色。"
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// 自动为需要认证的请求添加 Bearer Token",
+          "const authHeader = pm.request.headers.find(h => h.key === 'Authorization');",
+          "if (authHeader && authHeader.value === 'Bearer {{token}}') {",
+          "    if (!pm.collectionVariables.get('token')) {",
+          "        console.warn('⚠ Token未设置，请先执行「用户登录」接口');",
+          "    }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "stationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "orderNo",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

@@ -2,6 +2,7 @@ package com.iot.api.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -53,12 +54,20 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             // 配置异常处理 — 未认证请求返回 401 JSON
             .exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthEntryPoint))
-            // 配置路径权限
+            // 配置路径权限（按声明顺序匹配，首个命中生效）
             .authorizeHttpRequests(auth -> auth
+                // 公开接口：注册和登录
                 .requestMatchers("/api/user/register", "/api/user/login").permitAll()
+                // CORS 预检请求放行（OPTIONS 请求不携带 Token）
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                // WebSocket 握手请求放行（WebSocket 自身有鉴权逻辑）
+                .requestMatchers("/ws/**").permitAll()
+                // 管理端接口：需要 ADMIN 角色
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                // 其他 API 接口：需要认证
                 .requestMatchers("/api/**").authenticated()
-                .anyRequest().permitAll()
+                // 其余请求一律拒绝
+                .anyRequest().denyAll()
             )
             // 会话管理 — 无状态（不使用 Session）
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

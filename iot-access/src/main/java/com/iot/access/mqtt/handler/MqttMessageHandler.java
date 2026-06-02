@@ -11,6 +11,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
+import io.netty.util.AttributeKey;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -26,6 +27,11 @@ import java.util.Map;
  * - channelRead0：接收 MQTT 消息并按 Topic 路由
  * - userEventTriggered：空闲检测（读超时 → 断连）
  * </p>
+ * <p>
+ * <b>线程安全</b>：本 Handler 标注为 @Sharable（单例共享），
+ * 所有 channel 相关状态通过 {@code Channel.attr()} 按连接隔离存储，
+ * 避免多连接并发时状态互相覆盖。
+ * </p>
  *
  * @author IoT Team
  */
@@ -34,6 +40,9 @@ import java.util.Map;
 @ChannelHandler.Sharable
 @RequiredArgsConstructor
 public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage> {
+
+    /** Netty AttributeKey：每个连接独立存储的 clientId（设备SN） */
+    private static final AttributeKey<String> CLIENT_ID_ATTR = AttributeKey.valueOf("mqttClientId");
 
     /** MQTT Topic 前缀 */
     private static final String TOPIC_HEARTBEAT = "device/heartbeat";
@@ -45,9 +54,6 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
     private final DeviceService deviceService;
     private final MqttSessionManager sessionManager;
 
-    /** 当前连接的 clientId（在 CONNECT 时设置） */
-    private String clientId;
-
     // ==================== 连接生命周期 ====================
 
     @Override
@@ -57,8 +63,9 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
+        // 从 Channel.attr 读取当前连接的 clientId（线程安全，按连接隔离）
+        String clientId = ctx.channel().attr(CLIENT_ID_ATTR).get();
         log.info("[MQTT] 连接断开 - clientId: {}, remoteAddress: {}", clientId, ctx.channel().remoteAddress());
-        // 触发设备离线处理
         if (clientId != null) {
             sessionManager.unregister(clientId);
             deviceService.handleOffline(clientId);
@@ -67,6 +74,7 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        String clientId = ctx.channel().attr(CLIENT_ID_ATTR).get();
         log.error("[MQTT] 连接异常 - clientId: {}", clientId, cause);
         ctx.close();
     }
@@ -77,6 +85,7 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
     public void userEventTriggered(ChannelHandlerContext ctx, Object evt) {
         if (evt instanceof IdleStateEvent event) {
             if (event.state() == IdleState.READER_IDLE) {
+                String clientId = ctx.channel().attr(CLIENT_ID_ATTR).get();
                 log.warn("[MQTT] 读空闲超时，关闭连接 - clientId: {}", clientId);
                 ctx.close();
             }
@@ -108,8 +117,8 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
      * 处理 CONNECT 报文：设备鉴权
      * <p>
      * 提取 username(SN) 和 password(secret) 进行设备鉴权。
-     * 鉴权通过：发送 CONNACK(0)，注册会话，触发上线
-     * 鉴权失败：发送 CONNACK(4)（用户名密码错误），关闭连接
+     * 鉴权通过：发送 CONNACK(0)，将 SN 存入 {@code Channel.attr()}，注册会话，触发上线。
+     * 鉴权失败：发送 CONNACK(4)（用户名密码错误），关闭连接。
      * </p>
      */
     private void handleConnect(ChannelHandlerContext ctx, MqttMessage msg) {
@@ -126,8 +135,8 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
             return;
         }
 
-        // 鉴权通过
-        this.clientId = sn;
+        // 鉴权通过：将 clientId 存入 Channel.attr（按连接隔离，线程安全）
+        ctx.channel().attr(CLIENT_ID_ATTR).set(sn);
         ctx.writeAndFlush(MqttMessage.connack(0)); // 0 = Accepted
 
         // 注册会话
@@ -141,10 +150,14 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
 
     /**
      * 处理 PUBLISH 报文：根据 Topic 路由到不同业务方法
+     * <p>
+     * SN 从 Channel.attr 读取，保证多连接并发时各自读取到自己的 SN。
+     * </p>
      */
     private void handlePublish(ChannelHandlerContext ctx, MqttMessage msg) {
         String topic = msg.getTopic();
-        String sn = this.clientId;
+        // 从 Channel.attr 读取当前连接的 SN（线程安全）
+        String sn = ctx.channel().attr(CLIENT_ID_ATTR).get();
         String payload = msg.getPayloadAsString();
 
         if (sn == null) {
@@ -204,7 +217,8 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
      * 处理订阅请求：回复 SUBACK 确认
      */
     private void handleSubscribe(ChannelHandlerContext ctx, MqttMessage msg) {
-        log.debug("[MQTT] SUBSCRIBE - SN: {}, packetId: {}", clientId, msg.getPacketId());
+        String sn = ctx.channel().attr(CLIENT_ID_ATTR).get();
+        log.debug("[MQTT] SUBSCRIBE - SN: {}, packetId: {}", sn, msg.getPacketId());
         ctx.writeAndFlush(MqttMessage.suback(msg.getPacketId()));
     }
 
@@ -217,7 +231,8 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
      * </p>
      */
     private void handlePubrec(ChannelHandlerContext ctx, MqttMessage msg) {
-        log.debug("[MQTT] PUBREC - SN: {}, packetId: {}", clientId, msg.getPacketId());
+        String sn = ctx.channel().attr(CLIENT_ID_ATTR).get();
+        log.debug("[MQTT] PUBREC - SN: {}, packetId: {}", sn, msg.getPacketId());
         // 回复 PUBREL（QoS 2 第二步）
         MqttMessage pubrel = new MqttMessage();
         pubrel.setMessageType(MqttMessageType.PUBREL);
@@ -233,7 +248,8 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
      * </p>
      */
     private void handlePubrel(ChannelHandlerContext ctx, MqttMessage msg) {
-        log.debug("[MQTT] PUBREL - SN: {}, packetId: {}", clientId, msg.getPacketId());
+        String sn = ctx.channel().attr(CLIENT_ID_ATTR).get();
+        log.debug("[MQTT] PUBREL - SN: {}, packetId: {}", sn, msg.getPacketId());
         // 回复 PUBCOMP（QoS 2 第三步，完成握手）
         MqttMessage pubcomp = new MqttMessage();
         pubcomp.setMessageType(MqttMessageType.PUBCOMP);
@@ -254,7 +270,8 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
      * 处理断开连接请求
      */
     private void handleDisconnect(ChannelHandlerContext ctx) {
-        log.info("[MQTT] DISCONNECT - SN: {}", clientId);
+        String sn = ctx.channel().attr(CLIENT_ID_ATTR).get();
+        log.info("[MQTT] DISCONNECT - SN: {}", sn);
         ctx.close();
     }
 }

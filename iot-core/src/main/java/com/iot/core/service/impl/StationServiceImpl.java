@@ -213,6 +213,119 @@ public class StationServiceImpl implements StationService {
                 .build();
     }
 
+    // ==================== 管理端 CRUD ====================
+
+    /**
+     * 管理端分页查询充电站列表
+     * <p>
+     * 支持按名称模糊搜索和状态筛选，结果按ID升序排列。
+     * </p>
+     */
+    @Override
+    public PageResult<Station> adminListStations(String name, Integer status, int page, int size) {
+        LambdaQueryWrapper<Station> wrapper = new LambdaQueryWrapper<>();
+
+        if (name != null && !name.isBlank()) {
+            wrapper.like(Station::getName, name);
+        }
+        if (status != null) {
+            wrapper.eq(Station::getStatus, status);
+        }
+        wrapper.orderByAsc(Station::getId);
+
+        Page<Station> pageResult = stationMapper.selectPage(Page.of(page, size), wrapper);
+        return PageResult.of(pageResult.getRecords(), pageResult.getTotal(), page, size);
+    }
+
+    /**
+     * 管理端获取充电站详情
+     */
+    @Override
+    public Station adminGetStation(Long id) {
+        Station station = stationMapper.selectById(id);
+        if (station == null) {
+            throw new BusinessException(404, "充电站不存在");
+        }
+        return station;
+    }
+
+    /**
+     * 管理端新增充电站
+     * <p>
+     * 设置默认值：状态默认为营业中(1)，营业时间默认为 00:00-24:00。
+     * </p>
+     */
+    @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
+    public Station adminCreateStation(Station station) {
+        if (station.getStatus() == null) {
+            station.setStatus(1);
+        }
+        if (station.getBusinessHours() == null) {
+            station.setBusinessHours("00:00-24:00");
+        }
+        stationMapper.insert(station);
+        log.info("[充电站管理] 新增成功 - id: {}, name: {}", station.getId(), station.getName());
+        return station;
+    }
+
+    /**
+     * 管理端修改充电站
+     */
+    @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
+    public Station adminUpdateStation(Station station) {
+        Station existing = stationMapper.selectById(station.getId());
+        if (existing == null) {
+            throw new BusinessException(404, "充电站不存在");
+        }
+        stationMapper.updateById(station);
+        log.info("[充电站管理] 修改成功 - id: {}, name: {}", station.getId(), station.getName());
+        return stationMapper.selectById(station.getId());
+    }
+
+    /**
+     * 管理端删除充电站
+     * <p>
+     * 删除前检查是否有关联的充电桩，有关联则不允许删除。
+     * </p>
+     */
+    @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
+    public void adminDeleteStation(Long id) {
+        Station station = stationMapper.selectById(id);
+        if (station == null) {
+            throw new BusinessException(404, "充电站不存在");
+        }
+
+        // 检查是否有关联的充电桩
+        long chargerCount = chargerMapper.selectCount(
+                new LambdaQueryWrapper<Charger>().eq(Charger::getStationId, id)
+        );
+        if (chargerCount > 0) {
+            throw new BusinessException(409, "该充电站下存在 " + chargerCount + " 个充电桩，无法删除");
+        }
+
+        stationMapper.deleteById(id);
+        log.info("[充电站管理] 删除成功 - id: {}, name: {}", id, station.getName());
+    }
+
+    /**
+     * 管理端修改充电站营业状态
+     */
+    @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
+    public void adminUpdateStationStatus(Long id, Integer status) {
+        Station station = stationMapper.selectById(id);
+        if (station == null) {
+            throw new BusinessException(404, "充电站不存在");
+        }
+        station.setStatus(status);
+        stationMapper.updateById(station);
+        log.info("[充电站管理] 状态更新 - id: {}, status: {} -> {}", id, station.getName(),
+                status == 0 ? "暂停营业" : status == 1 ? "营业中" : "维护中");
+    }
+
     /**
      * Haversine 公式计算两点间距离（km）
      * <p>
