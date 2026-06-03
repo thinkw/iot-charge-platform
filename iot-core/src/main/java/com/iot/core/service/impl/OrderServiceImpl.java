@@ -20,6 +20,7 @@ import com.iot.core.service.OrderService;
 import com.iot.core.service.PricingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,12 +45,16 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {
 
+    /** Redis 设备状态 Key 前缀，与 ChargeServiceImpl 保持一致 */
+    private static final String REDIS_KEY_DEVICE_STATUS = "device:status:";
+
     private final ChargeOrderMapper chargeOrderMapper;
     private final ChargerMapper chargerMapper;
     private final StationMapper stationMapper;
     private final ChargeEventProducer chargeEventProducer;
     private final PricingService pricingService;
     private final DeviceService deviceService;
+    private final RedisTemplate<String, Object> redisTemplate;
 
     /**
      * 分页查询用户订单列表
@@ -342,6 +347,11 @@ public class OrderServiceImpl implements OrderService {
         charger.setStatus(DeviceStatusEnum.IDLE.getCode());
         charger.setChargedEnergy(finalEnergy);
         chargerMapper.updateById(charger);
+
+        // 同步更新 Redis（与 ChargeServiceImpl.stopCharge 保持一致）
+        String statusKey = REDIS_KEY_DEVICE_STATUS + charger.getSn();
+        redisTemplate.opsForHash().put(statusKey, "status",
+                String.valueOf(DeviceStatusEnum.IDLE.getCode()));
 
         log.info("[管理端-强制结束] 操作人: {}, orderNo: {}, 原因: {}, 电量: {}kWh, 费用: {}元",
                 operatorId, orderNo, reason, finalEnergy, feeDetail.totalAmount());

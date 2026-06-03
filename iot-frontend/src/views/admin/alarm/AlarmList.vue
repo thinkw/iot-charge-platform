@@ -70,7 +70,7 @@ import { getAlarmList, handleAlarm } from '@/api/admin/alarm'
 
 const list = ref<any[]>([]); const total = ref(0); const loading = ref(false)
 const query = reactive<any>({ page: 1, size: 20, alarmType: '', alarmLevel: undefined, status: undefined })
-const handleVisible = ref(false); const handleNote = ref(''); const alarmId = ref<number | null>(null)
+const handleVisible = ref(false); const handleNote = ref(''); const alarmId = ref<string | null>(null)
 
 async function fetchList() {
   loading.value = true

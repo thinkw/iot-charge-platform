@@ -1,3 +1,4 @@
+
 package com.iot.core.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -56,8 +57,8 @@ public class StatisticsServiceImpl implements StatisticsService {
     /** Dashboard 本地缓存（DashboardPushScheduler 每 5 秒轮询，避免重复 SCAN+MySQL） */
     private volatile DashboardVO cachedDashboard;
     private volatile long dashboardCacheTime = 0;
-    /** Dashboard 缓存有效期（毫秒），略小于推送间隔避免缓存穿透 */
-    private static final long DASHBOARD_CACHE_TTL_MS = 4_000;
+    /** Dashboard 缓存有效期（毫秒），1 秒内重复请求复用缓存，兼顾实时性和性能 */
+    private static final long DASHBOARD_CACHE_TTL_MS = 1_000;
 
     // ==================== 大屏数据 ====================
 

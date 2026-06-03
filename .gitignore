@@ -6,3 +6,6 @@
 /iot-simulator/target/
 /iot-miniapp/node_modules/
 /iot-miniapp/dist/
+/iot-frontend/node_modules
+iot-api/src/main/resources/static/
+

@@ -4,11 +4,11 @@ export function getAlarmList(params: Record<string, any>) {
   return http.get('/admin/alarm/list', { params })
 }
 
-export function getAlarmDetail(id: number) {
+export function getAlarmDetail(id: string) {
   return http.get(`/admin/alarm/${id}`)
 }
 
-export function handleAlarm(alarmId: number, handleNote: string) {
+export function handleAlarm(alarmId: string, handleNote: string) {
   return http.post('/admin/alarm/handle', { alarmId, handleNote })
 }
 

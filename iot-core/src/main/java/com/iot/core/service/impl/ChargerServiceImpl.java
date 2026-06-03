@@ -170,8 +170,8 @@ public class ChargerServiceImpl implements ChargerService {
         }
 
         chargerMapper.deleteById(id);
-        // 清理 Redis 缓存
-        redisTemplate.delete(DeviceConstants.REDIS_KEY_CHARGER_STATUS + id);
+        // 清理 Redis 缓存（Key 格式 device:status:{sn}，与 DeviceService 保持一致）
+        redisTemplate.delete(DeviceConstants.REDIS_KEY_CHARGER_STATUS + charger.getSn());
         log.info("[充电桩管理] 删除成功 - id: {}, sn: {}", id, charger.getSn());
     }
 
@@ -204,8 +204,9 @@ public class ChargerServiceImpl implements ChargerService {
         charger.setStatus(newStatus);
         chargerMapper.updateById(charger);
 
-        // 同步更新 Redis 缓存
-        redisTemplate.opsForValue().set(DeviceConstants.REDIS_KEY_CHARGER_STATUS + id, String.valueOf(newStatus));
+        // 同步更新 Redis 缓存（Key 格式 device:status:{sn}，Hash 结构，与 DeviceService 保持一致）
+        redisTemplate.opsForHash().put(DeviceConstants.REDIS_KEY_CHARGER_STATUS + charger.getSn(),
+                "status", String.valueOf(newStatus));
 
         log.info("[充电桩管理] 状态更新 - id: {}, status: {} -> {}", id, status,
                 newStatus == 1 ? "启用(空闲)" : "禁用(离线)");
