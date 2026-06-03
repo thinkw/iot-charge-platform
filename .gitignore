@@ -8,4 +8,5 @@
 /iot-miniapp/dist/
 /iot-frontend/node_modules
 iot-api/src/main/resources/static/
-
+.idea
+*.iml
