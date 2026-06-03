@@ -98,4 +98,33 @@ public class DateTimeUtil {
         }
         return LocalDateTime.parse(dateStr, DEFAULT_FORMATTER);
     }
+
+    /**
+     * 解析 Controller 传入的时间参数
+     * <p>
+     * 处理 Controller 层的时间字符串，支持以下格式：
+     * - ISO 8601 格式（含 'T' 分隔符，如 2026-06-01T12:00:00）
+     * - 标准格式（yyyy-MM-dd HH:mm:ss）
+     * 空白或 null 字符串返回 null，解析失败返回 null 并记录警告日志。
+     * </p>
+     *
+     * @param timeStr 时间字符串
+     * @return 解析后的 LocalDateTime，解析失败时为 null
+     */
+    public static LocalDateTime parseControllerParam(String timeStr) {
+        if (timeStr == null || timeStr.isBlank()) {
+            return null;
+        }
+        try {
+            // 统一替换 ISO 格式中的 T 分隔符，截取前 19 个字符
+            String cleaned = timeStr.replace("T", " ").trim();
+            if (cleaned.length() >= 19) {
+                cleaned = cleaned.substring(0, 19);
+            }
+            return LocalDateTime.parse(cleaned, DEFAULT_FORMATTER);
+        } catch (Exception e) {
+            // 解析失败，调用方自行处理
+            return null;
+        }
+    }
 }

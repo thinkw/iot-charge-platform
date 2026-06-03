@@ -164,7 +164,7 @@ public class OrderServiceImpl implements OrderService {
         log.info("[支付] 订单 {} 支付成功，金额: {} 元", orderNo, order.getTotalAmount());
 
         // 发送支付完成事件
-        chargeEventProducer.publishPayCompletedEvent(orderNo, order.getTotalAmount());
+        chargeEventProducer.publishPayCompletedEvent(order);
     }
 
     /**

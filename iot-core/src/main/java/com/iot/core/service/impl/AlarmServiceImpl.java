@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -143,16 +144,20 @@ public class AlarmServiceImpl implements AlarmService {
     /**
      * 按告警类型统计未处理告警数量
      * <p>
-     * 使用 GROUP BY alarm_type 聚合查询。
+     * 使用 SQL GROUP BY 聚合查询，避免加载全部未处理告警到内存。
      * </p>
      */
     @Override
     public Map<String, Long> getAlarmCountByType() {
-        List<Alarm> unhandledAlarms = alarmMapper.selectList(
-                new LambdaQueryWrapper<Alarm>().eq(Alarm::getStatus, STATUS_UNHANDLED)
-        );
-        return unhandledAlarms.stream()
-                .collect(Collectors.groupingBy(Alarm::getAlarmType, Collectors.counting()));
+        List<Map<String, Object>> rows = alarmMapper.countUnhandledByType();
+        // 使用 LinkedHashMap 保持稳定的迭代顺序
+        Map<String, Long> result = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            String alarmType = String.valueOf(row.get("alarm_type"));
+            Long cnt = ((Number) row.get("cnt")).longValue();
+            result.put(alarmType, cnt);
+        }
+        return result;
     }
 
     /**
@@ -160,12 +165,14 @@ public class AlarmServiceImpl implements AlarmService {
      */
     @Override
     public Map<String, Long> getAlarmCountByLevel() {
-        List<Alarm> unhandledAlarms = alarmMapper.selectList(
-                new LambdaQueryWrapper<Alarm>().eq(Alarm::getStatus, STATUS_UNHANDLED)
-        );
-        return unhandledAlarms.stream()
-                .collect(Collectors.groupingBy(
-                        a -> String.valueOf(a.getAlarmLevel()), Collectors.counting()));
+        List<Map<String, Object>> rows = alarmMapper.countUnhandledByLevel();
+        Map<String, Long> result = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            String level = String.valueOf(row.get("alarm_level"));
+            Long cnt = ((Number) row.get("cnt")).longValue();
+            result.put(level, cnt);
+        }
+        return result;
     }
 
     /**

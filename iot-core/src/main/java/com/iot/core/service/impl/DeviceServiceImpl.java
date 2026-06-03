@@ -480,34 +480,36 @@ public class DeviceServiceImpl implements DeviceService {
         long timeoutMillis = DeviceConstants.HEARTBEAT_TIMEOUT * 1000L;
 
         try {
-            // 使用 SCAN 命令遍历所有 device:status:* 的 key
-            Set<String> keys = redisTemplate.keys(REDIS_KEY_DEVICE_STATUS + "*");
-            if (keys == null || keys.isEmpty()) {
-                return;
-            }
+            // 使用 SCAN 命令遍历所有 device:status:* 的 key（避免 KEYS 阻塞 Redis）
+            ScanOptions scanOptions = ScanOptions.scanOptions()
+                    .match(REDIS_KEY_DEVICE_STATUS + "*")
+                    .count(100)
+                    .build();
+            try (Cursor<String> cursor = redisTemplate.scan(scanOptions)) {
+                while (cursor.hasNext()) {
+                    String key = cursor.next();
+                    try {
+                        Object heartbeatObj = redisTemplate.opsForHash().get(key, FIELD_LAST_HEARTBEAT);
+                        Object onlineObj = redisTemplate.opsForHash().get(key, FIELD_ONLINE);
 
-            for (String key : keys) {
-                try {
-                    Object heartbeatObj = redisTemplate.opsForHash().get(key, FIELD_LAST_HEARTBEAT);
-                    Object onlineObj = redisTemplate.opsForHash().get(key, FIELD_ONLINE);
+                        if (heartbeatObj == null) {
+                            continue;
+                        }
 
-                    if (heartbeatObj == null) {
-                        continue;
+                        long lastHeartbeat = Long.parseLong(heartbeatObj.toString());
+                        boolean isOnline = onlineObj != null && "1".equals(onlineObj.toString());
+
+                        // 设备在线但心跳超时 → 标记离线
+                        if (isOnline && (now - lastHeartbeat) > timeoutMillis) {
+                            // 从 key 中提取 SN（key格式: device:status:CHARGER-001）
+                            String sn = key.substring(REDIS_KEY_DEVICE_STATUS.length());
+                            log.warn("[心跳超时] SN: {}, 最后心跳: {}ms 前，标记离线",
+                                    sn, now - lastHeartbeat);
+                            handleOffline(sn);
+                        }
+                    } catch (Exception e) {
+                        log.error("[心跳超时] 处理 key={} 时发生异常", key, e);
                     }
-
-                    long lastHeartbeat = Long.parseLong(heartbeatObj.toString());
-                    boolean isOnline = onlineObj != null && "1".equals(onlineObj.toString());
-
-                    // 设备在线但心跳超时 → 标记离线
-                    if (isOnline && (now - lastHeartbeat) > timeoutMillis) {
-                        // 从 key 中提取 SN（key格式: device:status:CHARGER-001）
-                        String sn = key.substring(REDIS_KEY_DEVICE_STATUS.length());
-                        log.warn("[心跳超时] SN: {}, 最后心跳: {}ms 前，标记离线",
-                                sn, now - lastHeartbeat);
-                        handleOffline(sn);
-                    }
-                } catch (Exception e) {
-                    log.error("[心跳超时] 处理 key={} 时发生异常", key, e);
                 }
             }
         } catch (Exception e) {

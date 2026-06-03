@@ -2,6 +2,7 @@ package com.iot.core.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.iot.common.constant.DeviceConstants;
 import com.iot.common.enums.DeviceStatusEnum;
 import com.iot.common.exception.BusinessException;
 import com.iot.common.model.PageResult;
@@ -33,9 +34,6 @@ public class ChargerServiceImpl implements ChargerService {
     private final ChargerMapper chargerMapper;
     private final ChargeOrderMapper chargeOrderMapper;
     private final RedisTemplate<String, Object> redisTemplate;
-
-    /** Redis 充电桩状态缓存 Key 前缀 */
-    private static final String CHARGER_STATUS_PREFIX = "charger:status:";
 
     /** 充电中状态码 */
     private static final int STATUS_CHARGING = 2;
@@ -135,13 +133,14 @@ public class ChargerServiceImpl implements ChargerService {
             throw new BusinessException(404, "充电桩不存在");
         }
 
-        // SN 和 stationId 不允许修改
+        // SN 和 stationId 不允许修改（保持设备归属一致性）
         charger.setSn(existing.getSn());
         charger.setStationId(existing.getStationId());
 
+        // updateById 后 charger 对象即为最新数据，无需再次查询
         chargerMapper.updateById(charger);
         log.info("[充电桩管理] 修改成功 - id: {}, name: {}", charger.getId(), charger.getName());
-        return chargerMapper.selectById(charger.getId());
+        return charger;
     }
 
     // ==================== 删除 ====================
@@ -172,7 +171,7 @@ public class ChargerServiceImpl implements ChargerService {
 
         chargerMapper.deleteById(id);
         // 清理 Redis 缓存
-        redisTemplate.delete(CHARGER_STATUS_PREFIX + id);
+        redisTemplate.delete(DeviceConstants.REDIS_KEY_CHARGER_STATUS + id);
         log.info("[充电桩管理] 删除成功 - id: {}, sn: {}", id, charger.getSn());
     }
 
@@ -206,7 +205,7 @@ public class ChargerServiceImpl implements ChargerService {
         chargerMapper.updateById(charger);
 
         // 同步更新 Redis 缓存
-        redisTemplate.opsForValue().set(CHARGER_STATUS_PREFIX + id, String.valueOf(newStatus));
+        redisTemplate.opsForValue().set(DeviceConstants.REDIS_KEY_CHARGER_STATUS + id, String.valueOf(newStatus));
 
         log.info("[充电桩管理] 状态更新 - id: {}, status: {} -> {}", id, status,
                 newStatus == 1 ? "启用(空闲)" : "禁用(离线)");

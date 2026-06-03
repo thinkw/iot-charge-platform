@@ -87,7 +87,6 @@ function handleLogout() {
     }
   ).then(() => {
     clearAuth()
-    emit('logout')
     router.replace('/login')
   }).catch(() => {
     // 用户取消，不做任何操作

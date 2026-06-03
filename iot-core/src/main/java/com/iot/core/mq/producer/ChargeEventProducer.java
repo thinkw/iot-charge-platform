@@ -71,14 +71,15 @@ public class ChargeEventProducer {
     /**
      * 发送支付完成事件
      *
-     * @param orderNo 订单编号
-     * @param amount  支付金额
+     * @param order 充电订单（需携带 userId 以支持 WebSocket 精准推送）
      */
-    public void publishPayCompletedEvent(String orderNo, BigDecimal amount) {
+    public void publishPayCompletedEvent(ChargeOrder order) {
         Map<String, Object> event = new HashMap<>();
         event.put("eventType", "PAY_COMPLETED");
-        event.put("orderNo", orderNo);
-        event.put("amount", amount);
+        event.put("orderNo", order.getOrderNo());
+        event.put("orderId", order.getId());
+        event.put("userId", order.getUserId());
+        event.put("amount", order.getTotalAmount());
         event.put("timestamp", System.currentTimeMillis());
 
         sendEvent(event);

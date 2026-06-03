@@ -17,6 +17,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
+
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
@@ -49,6 +53,12 @@ public class StatisticsServiceImpl implements StatisticsService {
     /** 设备状态 Redis Key 前缀 */
     private static final String DEVICE_STATUS_PREFIX = "device:status:";
 
+    /** Dashboard 本地缓存（DashboardPushScheduler 每 5 秒轮询，避免重复 SCAN+MySQL） */
+    private volatile DashboardVO cachedDashboard;
+    private volatile long dashboardCacheTime = 0;
+    /** Dashboard 缓存有效期（毫秒），略小于推送间隔避免缓存穿透 */
+    private static final long DASHBOARD_CACHE_TTL_MS = 4_000;
+
     // ==================== 大屏数据 ====================
 
     /**
@@ -60,13 +70,20 @@ public class StatisticsServiceImpl implements StatisticsService {
      */
     @Override
     public DashboardVO getDashboard() {
+        // 优先返回缓存（DashboardPushScheduler 每 5 秒轮询，缓存减少 SCAN + MySQL 开销）
+        long now = System.currentTimeMillis();
+        if (cachedDashboard != null && (now - dashboardCacheTime) < DASHBOARD_CACHE_TTL_MS) {
+            return cachedDashboard;
+        }
+
         // 1. 统计设备在线和充电数量（从 Redis）
         int onlineCount = 0;
         int chargingCount = 0;
 
-        Set<String> keys = redisTemplate.keys(DEVICE_STATUS_PREFIX + "*");
-        if (keys != null) {
-            for (String key : keys) {
+        // 使用 SCAN 替代 KEYS，避免阻塞 Redis（生产环境安全）
+        try (Cursor<String> cursor = scanDeviceStatusKeys()) {
+            while (cursor.hasNext()) {
+                String key = cursor.next();
                 Object statusObj = redisTemplate.opsForHash().get(key, "status");
                 Object onlineObj = redisTemplate.opsForHash().get(key, "online");
                 if (onlineObj != null && Integer.parseInt(onlineObj.toString()) == 1) {
@@ -76,6 +93,8 @@ public class StatisticsServiceImpl implements StatisticsService {
                     chargingCount++;
                 }
             }
+        } catch (Exception e) {
+            log.warn("[大屏数据] Redis SCAN 失败，设备在线统计可能不准确", e);
         }
 
         // 2. 查询总设备数
@@ -106,7 +125,7 @@ public class StatisticsServiceImpl implements StatisticsService {
         // 5. 未处理告警数
         int unhandledAlarmCount = (int) alarmService.getUnhandledAlarmCount();
 
-        return DashboardVO.builder()
+        DashboardVO result = DashboardVO.builder()
                 .onlineDeviceCount(onlineCount)
                 .totalDeviceCount((int) totalDeviceCount)
                 .onlineRate(onlineRate)
@@ -115,6 +134,12 @@ public class StatisticsServiceImpl implements StatisticsService {
                 .todayRevenue(todayRevenue)
                 .unhandledAlarmCount(unhandledAlarmCount)
                 .build();
+
+        // 更新本地缓存
+        cachedDashboard = result;
+        dashboardCacheTime = now;
+
+        return result;
     }
 
     // ==================== 趋势统计 ====================
@@ -188,55 +213,39 @@ public class StatisticsServiceImpl implements StatisticsService {
     /**
      * 获取站点排名
      * <p>
-     * 按指定维度对充电站进行排名：
-     * - order：按订单数量降序
-     * - energy：按充电总量降序
-     * - revenue：按总营收降序
+     * 使用 SQL GROUP BY 聚合代替加载全部订单到内存。
+     * 按指定维度排序：order=订单量, energy=充电量, revenue=营收。
      * </p>
      */
     @Override
     public List<StationRankVO> getStationRank(String type, int topN) {
-        // 查询所有已完成订单
-        List<ChargeOrder> completedOrders = chargeOrderMapper.selectList(
-                new LambdaQueryWrapper<ChargeOrder>()
-                        .eq(ChargeOrder::getOrderStatus, 2) // COMPLETED
-        );
+        // 使用 SQL 聚合查询（按站点 GROUP BY 已完成订单）
+        List<Map<String, Object>> rows = chargeOrderMapper.selectStationAggregation();
 
-        // 按站点聚合
-        Map<Long, List<ChargeOrder>> ordersByStation = completedOrders.stream()
-                .collect(Collectors.groupingBy(ChargeOrder::getStationId));
-
-        // 查询所有站点名称映射
+        // 查询所有站点名称映射（单次查询）
         Map<Long, String> stationNameMap = stationMapper.selectList(null).stream()
                 .collect(Collectors.toMap(Station::getId, Station::getName, (a, b) -> a));
 
         // 构建排名数据
         List<StationRankVO> rankings = new ArrayList<>();
-        for (Map.Entry<Long, List<ChargeOrder>> entry : ordersByStation.entrySet()) {
-            Long stationId = entry.getKey();
-            List<ChargeOrder> stationOrders = entry.getValue();
-
-            BigDecimal totalEnergy = stationOrders.stream()
-                    .map(ChargeOrder::getChargedEnergy)
-                    .filter(Objects::nonNull)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add)
+        for (Map<String, Object> row : rows) {
+            Long stationId = ((Number) row.get("station_id")).longValue();
+            Long orderCount = ((Number) row.get("order_count")).longValue();
+            BigDecimal totalEnergy = new BigDecimal(row.get("total_energy").toString())
                     .setScale(2, RoundingMode.HALF_UP);
-            BigDecimal totalRevenue = stationOrders.stream()
-                    .map(ChargeOrder::getTotalAmount)
-                    .filter(Objects::nonNull)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add)
+            BigDecimal totalRevenue = new BigDecimal(row.get("total_revenue").toString())
                     .setScale(2, RoundingMode.HALF_UP);
 
             rankings.add(StationRankVO.builder()
                     .stationId(stationId)
                     .stationName(stationNameMap.getOrDefault(stationId, "未知站点"))
-                    .orderCount(stationOrders.size())
+                    .orderCount(orderCount)
                     .totalEnergy(totalEnergy)
                     .totalRevenue(totalRevenue)
                     .build());
         }
 
-        // 按指定维度排序
+        // 按指定维度降序排序
         switch (type) {
             case "energy" -> rankings.sort((a, b) -> b.getTotalEnergy().compareTo(a.getTotalEnergy()));
             case "revenue" -> rankings.sort((a, b) -> b.getTotalRevenue().compareTo(a.getTotalRevenue()));
@@ -272,5 +281,22 @@ public class StatisticsServiceImpl implements StatisticsService {
                 .faultRate(faultRate)
                 .totalFaultCount(totalFaultCount)
                 .build();
+    }
+
+    /**
+     * 使用 Redis SCAN 命令扫描所有设备状态 Key
+     * <p>
+     * SCAN 命令基于游标迭代遍历，不会像 KEYS 命令一样阻塞 Redis 服务器。
+     * 每次 SCAN 返回一批 key，通过 Cursor 统一迭代。
+     * </p>
+     *
+     * @return 设备状态 Key 的游标
+     */
+    private Cursor<String> scanDeviceStatusKeys() {
+        ScanOptions options = ScanOptions.scanOptions()
+                .match(DEVICE_STATUS_PREFIX + "*")
+                .count(100)
+                .build();
+        return redisTemplate.scan(options);
     }
 }

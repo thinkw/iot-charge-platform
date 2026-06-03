@@ -25,7 +25,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
+import { ref, watch, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import type { FaultStatistics } from '@/api/dashboard'
 
@@ -123,7 +123,8 @@ function renderChart() {
 }
 
 watch(() => props.data, () => {
-  renderChart()
+  // 等待 v-if="hasData" 创建 DOM 后再初始化 ECharts
+  nextTick(() => renderChart())
 }, { deep: true })
 
 function onResize() {
@@ -132,7 +133,8 @@ function onResize() {
 
 onMounted(() => {
   window.addEventListener('resize', onResize)
-  renderChart()
+  // 数据可能在 mounted 前已加载，同样需要等 DOM 就绪
+  nextTick(() => renderChart())
 })
 
 onUnmounted(() => {

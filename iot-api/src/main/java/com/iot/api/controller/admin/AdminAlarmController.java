@@ -3,6 +3,7 @@ package com.iot.api.controller.admin;
 import com.iot.api.security.SecurityUtil;
 import com.iot.common.model.PageResult;
 import com.iot.common.model.Result;
+import com.iot.common.util.DateTimeUtil;
 import com.iot.core.dto.request.AlarmHandleRequest;
 import com.iot.core.dto.response.AlarmStatisticsVO;
 import com.iot.core.entity.Alarm;
@@ -68,8 +69,8 @@ public class AdminAlarmController {
         log.info("[管理端-告警列表] 操作人: {}, chargerId: {}, alarmType: {}, alarmLevel: {}, status: {}",
                 operatorId, chargerId, alarmType, alarmLevel, status);
 
-        LocalDateTime start = parseDateTime(startTime);
-        LocalDateTime end = parseDateTime(endTime);
+        LocalDateTime start = DateTimeUtil.parseControllerParam(startTime);
+        LocalDateTime end = DateTimeUtil.parseControllerParam(endTime);
 
         PageResult<Alarm> result = alarmService.listAlarms(
                 chargerId, stationId, alarmType, alarmLevel, status, start, end, page, size);
@@ -126,26 +127,5 @@ public class AdminAlarmController {
 
         AlarmStatisticsVO statistics = alarmService.getAlarmStatistics();
         return Result.success(statistics);
-    }
-
-    // ==================== 工具方法 ====================
-
-    /**
-     * 时间字符串解析
-     */
-    private LocalDateTime parseDateTime(String timeStr) {
-        if (timeStr == null || timeStr.isBlank()) {
-            return null;
-        }
-        try {
-            String cleaned = timeStr.replace("T", " ").trim();
-            if (cleaned.length() >= 19) {
-                cleaned = cleaned.substring(0, 19);
-            }
-            return LocalDateTime.parse(cleaned, TIME_FMT);
-        } catch (Exception e) {
-            log.warn("[时间解析] 无效的时间格式: {}", timeStr);
-            return null;
-        }
     }
 }

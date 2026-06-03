@@ -81,9 +81,9 @@ public class MqttDecoder extends ByteToMessageDecoder {
         try {
             switch (messageType) {
                 case CONNECT -> decodeConnect(in, message, flags);
-                case PUBLISH -> decodePublish(in, message, flags);
+                case PUBLISH -> decodePublish(in, message, flags, remainingLength);
                 case PUBACK -> decodePuback(in, message);
-                case SUBSCRIBE -> decodeSubscribe(in, message);
+                case SUBSCRIBE -> decodeSubscribe(in, message, remainingLength);
                 case PINGREQ -> { /* PINGREQ 无负载 */ }
                 case DISCONNECT -> { /* DISCONNECT 无负载 */ }
                 default -> {
@@ -169,23 +169,30 @@ public class MqttDecoder extends ByteToMessageDecoder {
      * 固定头标志：DUP(bit3) + QoS(bit2-1) + RETAIN(bit0)
      * 可变头：Topic Name(UTF-8) + [Packet Identifier(QoS>0时)]
      * 负载：消息内容
+     * <p>
+     * 负载长度 = remainingLength - 可变头已读字节数（Topic字段 + 可选PacketId）。
+     * 不能使用 in.readableBytes()，因为 TCP 段中可能已粘带了后续报文。
      * </p>
+     *
+     * @param remainingLength 报文的剩余长度（由 MQTT 固定头中的变长编码字段指定）
      */
-    private void decodePublish(ByteBuf in, MqttMessage message, int flags) {
+    private void decodePublish(ByteBuf in, MqttMessage message, int flags, int remainingLength) {
         message.setDup((flags & 0x08) != 0);
         message.setQos((flags >> 1) & 0x03);
         message.setRetain((flags & 0x01) != 0);
 
-        // Topic
+        // Topic（UTF-8 编码：2字节长度前缀 + N字节内容）
         message.setTopic(readUtf8String(in));
+        int consumedBytes = 2 + message.getTopic().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
 
-        // Packet Identifier（仅 QoS > 0 时）
+        // Packet Identifier（仅 QoS > 0 时，2 字节）
         if (message.getQos() > 0) {
             message.setPacketId(in.readUnsignedShort());
+            consumedBytes += 2;
         }
 
-        // Payload（读取剩余的所有可读字节作为负载）
-        int payloadSize = in.readableBytes();
+        // 负载 = 剩余长度 - 已消费的可变头字节数（精确计算，避免 TCP 粘包干扰）
+        int payloadSize = remainingLength - consumedBytes;
         if (payloadSize > 0) {
             byte[] payload = new byte[payloadSize];
             in.readBytes(payload);
@@ -205,9 +212,27 @@ public class MqttDecoder extends ByteToMessageDecoder {
 
     // ==================== SUBSCRIBE 报文解析 ====================
 
-    private void decodeSubscribe(ByteBuf in, MqttMessage message) {
+    /**
+     * 解析 SUBSCRIBE 报文并消费全部负载字节
+     * <p>
+     * SUBSCRIBE 负载 = 2字节 PacketId + Topic Filter 列表
+     * 每个 Topic Filter = UTF-8字符串(2字节长度+N字节内容) + 1字节 Requested QoS
+     * <p>
+     * 必须消费 remainingLength 指定数量的字节，否则残留数据会导致后续消息解析错位。
+     * </p>
+     *
+     * @param in              字节缓冲区
+     * @param message         目标消息对象
+     * @param remainingLength 报文的剩余长度（不含固定头，来自 decode() 计算）
+     */
+    private void decodeSubscribe(ByteBuf in, MqttMessage message, int remainingLength) {
         message.setPacketId(in.readUnsignedShort());
-        // 跳过 Topic Filter 列表（简化处理）
+        // 消费剩余的 Topic Filter 列表字节（本服务端不关心具体订阅内容）
+        int consumedBytes = 2; // packetId 已读 2 字节
+        int toSkip = remainingLength - consumedBytes;
+        if (toSkip > 0) {
+            in.skipBytes(toSkip);
+        }
         log.debug("[MQTT解码] SUBSCRIBE - packetId: {}", message.getPacketId());
     }
 

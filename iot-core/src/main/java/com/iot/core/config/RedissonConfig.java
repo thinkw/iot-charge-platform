@@ -22,19 +22,19 @@ public class RedissonConfig {
     /**
      * Redis 主机地址，默认 localhost
      */
-    @Value("${spring.redis.host:localhost}")
+    @Value("${spring.data.redis.host:localhost}")
     private String host;
 
     /**
      * Redis 端口号，默认 6379
      */
-    @Value("${spring.redis.port:6379}")
+    @Value("${spring.data.redis.port:6379}")
     private int port;
 
     /**
      * Redis 密码，默认为空（无需密码）
      */
-    @Value("${spring.redis.password:}")
+    @Value("${spring.data.redis.password:}")
     private String password;
 
     /**

@@ -3,6 +3,7 @@ package com.iot.api.controller.admin;
 import com.iot.api.security.SecurityUtil;
 import com.iot.common.model.PageResult;
 import com.iot.common.model.Result;
+import com.iot.common.util.DateTimeUtil;
 import com.iot.core.dto.response.OrderVO;
 import com.iot.core.service.OrderService;
 import jakarta.validation.constraints.NotBlank;
@@ -62,8 +63,8 @@ public class AdminOrderController {
         Long operatorId = SecurityUtil.getCurrentUserId();
         log.info("[管理端-订单列表] 操作人: {}, page: {}, size: {}", operatorId, page, size);
 
-        LocalDateTime start = parseDateTime(startTime);
-        LocalDateTime end = parseDateTime(endTime);
+        LocalDateTime start = DateTimeUtil.parseControllerParam(startTime);
+        LocalDateTime end = DateTimeUtil.parseControllerParam(endTime);
 
         PageResult<OrderVO> result = orderService.listAllOrders(
                 userId, chargerId, stationId, orderStatus, payStatus, start, end, page, size);
@@ -162,25 +163,4 @@ public class AdminOrderController {
 
     // ==================== 工具方法 ====================
 
-    /**
-     * 简单时间字符串解析
-     * <p>
-     * 支持格式：yyyy-MM-dd HH:mm:ss 和 ISO 格式（含T）。
-     * </p>
-     */
-    private LocalDateTime parseDateTime(String timeStr) {
-        if (timeStr == null || timeStr.isBlank()) {
-            return null;
-        }
-        try {
-            String cleaned = timeStr.replace("T", " ").trim();
-            if (cleaned.length() >= 19) {
-                cleaned = cleaned.substring(0, 19);
-            }
-            return LocalDateTime.parse(cleaned, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-        } catch (Exception e) {
-            log.warn("[时间解析] 无效的时间格式: {}", timeStr);
-            return null;
-        }
-    }
 }

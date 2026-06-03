@@ -43,4 +43,15 @@ public class DeviceConstants {
      */
     private DeviceConstants() {
     }
+
+    // ==================== Redis Key 常量 ====================
+
+    /** Redis 设备在线状态 Key 前缀，格式：device:status:{sn} */
+    public static final String REDIS_KEY_DEVICE_STATUS = "device:status:";
+
+    /** Redis 设备实时数据 Key 前缀，格式：device:data:{sn} */
+    public static final String REDIS_KEY_DEVICE_DATA = "device:data:";
+
+    /** Redis 充电桩状态缓存 Key 前缀（与设备状态 Key 统一） */
+    public static final String REDIS_KEY_CHARGER_STATUS = "device:status:";
 }

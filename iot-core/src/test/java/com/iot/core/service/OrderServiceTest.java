@@ -220,7 +220,7 @@ class OrderServiceTest {
         assertNotNull(updatedOrder.getPayTime(), "支付成功后支付时间不应为空");
 
         // Assert: 验证事件发送
-        verify(chargeEventProducer).publishPayCompletedEvent(eq(ORDER_NO), any(BigDecimal.class));
+        verify(chargeEventProducer).publishPayCompletedEvent(orderCaptor.capture());
     }
 
     // ==================== refundOrder 测试 ====================

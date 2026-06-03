@@ -2,7 +2,7 @@
  * WebSocket 连接管理 composable
  * <p>
  * 管理与后端 WebSocket 服务的连接，自动重连，提供消息分发能力。
- * WebSocket 地址：ws://localhost:9090/ws/charge?userId={userId}
+ * WebSocket 地址：ws://localhost:8080/ws/charge?userId={userId}
  * </p>
  */
 import { ref, onUnmounted } from 'vue'

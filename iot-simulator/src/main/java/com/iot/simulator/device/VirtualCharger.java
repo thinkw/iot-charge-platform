@@ -138,7 +138,9 @@ public class VirtualCharger {
         options.setUserName(sn);          // username = SN
         options.setPassword(secret.toCharArray()); // password = secret
         options.setCleanSession(true);
-        options.setKeepAliveInterval(heartbeatInterval);
+        // 保持连接基于应用层 device/heartbeat（30s间隔 + 90s服务端超时检测），
+        // 禁用 Paho MQTT 协议层 PINGREQ 以避免与应用层心跳冲突导致误断连
+        options.setKeepAliveInterval(0);
         options.setConnectionTimeout(30);
         options.setAutomaticReconnect(true);  // 自动重连
 
