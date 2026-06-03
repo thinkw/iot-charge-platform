@@ -89,6 +89,24 @@ public class OrderController {
     }
 
     /**
+     * 通过订单号获取订单详情
+     * <p>
+     * 适用于前端无法精确传递雪花算法 ID 的场景（JavaScript 大整数精度丢失）。
+     * </p>
+     *
+     * @param orderNo 订单编号
+     * @return 订单详情
+     */
+    @GetMapping("/by-no/{orderNo}")
+    public Result<OrderVO> getOrderDetailByOrderNo(@PathVariable String orderNo) {
+        Long userId = SecurityUtil.getCurrentUserId();
+        log.info("[订单详情-按单号] userId: {}, orderNo: {}", userId, orderNo);
+
+        OrderVO order = orderService.getOrderDetailByOrderNo(orderNo, userId);
+        return Result.success(order);
+    }
+
+    /**
      * 模拟支付
      * <p>
      * 仅支持已完成（COMPLETED）且未支付（UNPAID）的订单。

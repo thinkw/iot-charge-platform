@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 阶段4：订单与计费模块开发 | ✅ 完成 | 订单管理、支付、计费规则、退款 |
 | 阶段5：运营后台与告警开发 | ✅ 完成 | 站点/充电桩/告警管理、数据统计、WebSocket推送、操作日志 |
 | 阶段6：实时推送与大屏开发 | ✅ 完成 | Vue3前端大屏、WebSocket定时推送、ECharts图表、DashboardPushScheduler |
-| 阶段7：联调测试与优化 | ✅ 完成 | 3个严重Bug修复、2个MQTT解码器Bug修复、8场景联调通过、Dashboard缓存、10个新测试、133测试全过 |
+| 阶段7：联调测试与优化 | ✅ 完成 | 3个严重Bug修复、2个MQTT解码器Bug修复、8场景联调通过、Dashboard缓存、23个新测试、146测试全过 |
 | 阶段8：文档整理与演示准备 | ✅ 完成 | API_DOC.md 接口文档、DEPLOY.md 部署文档、README.md 项目说明 |
 
 ---
@@ -57,17 +57,17 @@ java -jar iot-simulator/target/iot-simulator-1.0.0-SNAPSHOT.jar
 ### 前端项目命令
 
 ```bash
-# 进入前端目录
+# 管理端 Web
 cd iot-frontend
-
-# 安装依赖
 npm install
+npm run dev          # 开发服务器 (http://localhost:5173)
+npm run build        # 构建生产版本（输出到 iot-api/src/main/resources/static/）
 
-# 启动开发服务器 (http://localhost:5173)
-npm run dev
-
-# 构建生产版本（输出到 iot-api/src/main/resources/static/）
-npm run build
+# 微信小程序
+cd iot-miniapp
+npm install
+npm run dev:mp-weixin  # 开发模式（需微信开发者工具打开 dist/dev/mp-weixin）
+npm run build:mp-weixin # 生产构建
 ```
 
 ---
@@ -77,8 +77,9 @@ npm run build
 ### 模块依赖关系
 
 ```
-iot-frontend (Vue3 独立前端项目)
-     └── (通过 Vite proxy 连接后端 API:8080 + WebSocket:9090)
+iot-frontend (Vue3 管理端 Web 项目)
+iot-miniapp  (uni-app 微信小程序用户端项目)
+     └── (通过 HTTP API:8080 + WebSocket:9090 连接后端)
 
 iot-simulator (独立JAR，不依赖主应用)
      └── iot-common

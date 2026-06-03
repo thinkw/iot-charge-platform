@@ -47,6 +47,15 @@ public interface OrderService {
     OrderVO getOrderDetail(Long orderId, Long userId);
 
     /**
+     * 通过订单号获取订单详情（避免前端雪花ID精度丢失）
+     *
+     * @param orderNo 订单编号
+     * @param userId  用户ID
+     * @return 订单详情
+     */
+    OrderVO getOrderDetailByOrderNo(String orderNo, Long userId);
+
+    /**
      * 模拟支付
      * <p>
      * 1. 校验订单属于当前用户

@@ -4,6 +4,9 @@ import com.iot.core.dto.request.LoginRequest;
 import com.iot.core.dto.request.RegisterRequest;
 import com.iot.core.dto.response.LoginResponse;
 import com.iot.core.dto.response.UserInfoVO;
+import com.iot.core.entity.User;
+
+import java.util.List;
 
 /**
  * 用户服务接口
@@ -54,4 +57,38 @@ public interface UserService {
      * @throws com.iot.common.exception.BusinessException 用户不存在时抛出（code=404）
      */
     UserInfoVO getUserInfo(Long userId);
+
+    /**
+     * 管理端 — 分页查询用户列表
+     * <p>
+     * 支持按手机号模糊搜索和状态筛选。
+     * </p>
+     *
+     * @param phone  手机号（可选，模糊搜索）
+     * @param status 状态（可选）：0-禁用，1-正常
+     * @param page   页码
+     * @param size   每页数量
+     * @return 分页用户列表
+     */
+    List<User> adminListUsers(String phone, Integer status, int page, int size);
+
+    /**
+     * 管理端 — 查询用户总数（分页用）
+     *
+     * @param phone  手机号（可选）
+     * @param status 状态（可选）
+     * @return 用户总数
+     */
+    long adminCountUsers(String phone, Integer status);
+
+    /**
+     * 管理端 — 启用/禁用用户
+     * <p>
+     * 修改用户的状态字段。禁用后用户无法登录。
+     * </p>
+     *
+     * @param userId 用户ID
+     * @param status 目标状态：0-禁用，1-正常
+     */
+    void adminUpdateUserStatus(Long userId, Integer status);
 }

@@ -1,0 +1,1 @@
+import{d as o,o as e,c as a,r as s}from"./index-twCRNN4O.js";import{_ as r}from"./_plugin-vue_export-helper-DlAUqK2U.js";const _={class:"auth-layout"},c=o({__name:"AuthLayout",setup(n){return(t,u)=>(e(),a("div",_,[s(t.$slots,"default",{},void 0,!0)]))}}),p=r(c,[["__scopeId","data-v-1f9ffa13"]]);export{p as default};

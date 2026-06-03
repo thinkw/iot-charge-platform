@@ -77,7 +77,8 @@ iot-charge-platform/
 ├── iot-access/          # 接入层：Netty MQTT 服务端(1883) + WebSocket(9090)
 ├── iot-api/             # HTTP 接口层：Controller、Spring Security、JWT
 ├── iot-simulator/       # 虚拟充电桩模拟器（独立启动）
-├── iot-frontend/        # Vue3 前端项目（运营大屏）
+├── iot-frontend/        # Vue3 管理端 Web 项目
+├── iot-miniapp/         # uni-app 微信小程序用户端
 ├── PRD.md               # 产品需求文档
 ├── DESIGN.md            # 技术设计文档
 ├── API_DOC.md           # API 接口文档
@@ -91,9 +92,9 @@ iot-charge-platform/
 
 ## 核心功能
 
-### 用户端
+### 用户端（微信小程序 + Web）
 - 📱 手机号注册/登录（JWT 认证）
-- 📍 充电站列表查询（支持按距离/价格/可用桩数排序）
+- 📍 充电站列表查询（支持按距离/价格/可用桩数排序 + 下拉刷新）
 - 🔍 充电站详情与充电桩实时状态
 - ⚡ 扫码启桩 / 结束充电
 - 📊 实时充电数据（电压、电流、功率、电量、费用）

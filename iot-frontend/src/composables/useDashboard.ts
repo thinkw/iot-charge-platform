@@ -17,7 +17,6 @@ import {
   type FaultStatistics
 } from '@/api/dashboard'
 import { useWebSocket, type WsMessage } from './useWebSocket'
-import { getCurrentUser } from '@/utils/auth'
 
 export function useDashboard() {
   // ==================== 状态 ====================
@@ -45,10 +44,10 @@ export function useDashboard() {
   const faultStats = ref<FaultStatistics | null>(null)
   const faultLoading = ref(false)
 
-  /** WebSocket — 使用当前登录用户的真实 ID */
-  const currentUser = getCurrentUser()
-  const userId = currentUser?.userId ?? 0
-  const { connected: wsConnected, onMessage, connect: wsConnect } = useWebSocket(userId)
+  /** WebSocket — 连接 Dashboard 推送（支持环境变量 VITE_WS_DASHBOARD_URL 配置） */
+  const dashboardWsUrl = import.meta.env.VITE_WS_DASHBOARD_URL
+    || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//localhost:9090/dashboard`
+  const { connected: wsConnected, onMessage, connect: wsConnect } = useWebSocket(dashboardWsUrl)
 
   // ==================== 数据加载方法 ====================
 

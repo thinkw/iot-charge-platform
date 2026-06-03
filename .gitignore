@@ -4,3 +4,5 @@
 /iot-common/target/
 /iot-core/target/
 /iot-simulator/target/
+/iot-miniapp/node_modules/
+/iot-miniapp/dist/

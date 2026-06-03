@@ -1,0 +1,78 @@
+{
+  "pages": [
+    {
+      "path": "pages/login/index",
+      "style": { "navigationBarTitleText": "登录" }
+    },
+    {
+      "path": "pages/station-list/index",
+      "style": { "navigationBarTitleText": "充电站" }
+    },
+    {
+      "path": "pages/station-detail/index",
+      "style": { "navigationBarTitleText": "充电站详情" }
+    },
+    {
+      "path": "pages/charger-detail/index",
+      "style": { "navigationBarTitleText": "充电桩详情" }
+    },
+    {
+      "path": "pages/charge-confirm/index",
+      "style": { "navigationBarTitleText": "确认充电" }
+    },
+    {
+      "path": "pages/charge-monitor/index",
+      "style": { "navigationBarTitleText": "充电监控" }
+    },
+    {
+      "path": "pages/order-list/index",
+      "style": { "navigationBarTitleText": "我的订单" }
+    },
+    {
+      "path": "pages/order-detail/index",
+      "style": { "navigationBarTitleText": "订单详情" }
+    },
+    {
+      "path": "pages/reservation/index",
+      "style": { "navigationBarTitleText": "预约充电" }
+    },
+    {
+      "path": "pages/profile/index",
+      "style": { "navigationBarTitleText": "个人中心" }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "IoT充电平台",
+    "navigationBarBackgroundColor": "#F8F8F8",
+    "backgroundColor": "#F5F7FA"
+  },
+  "tabBar": {
+    "color": "#7A7E83",
+    "selectedColor": "#409EFF",
+    "backgroundColor": "#FFFFFF",
+    "list": [
+      {
+        "pagePath": "pages/station-list/index",
+        "text": "充电站",
+        "iconPath": "static/tab/station.png",
+        "selectedIconPath": "static/tab/station-active.png"
+      },
+      {
+        "pagePath": "pages/order-list/index",
+        "text": "订单",
+        "iconPath": "static/tab/order.png",
+        "selectedIconPath": "static/tab/order-active.png"
+      },
+      {
+        "pagePath": "pages/profile/index",
+        "text": "我的",
+        "iconPath": "static/tab/profile.png",
+        "selectedIconPath": "static/tab/profile-active.png"
+      }
+    ]
+  },
+  "permission": {
+    "scope.userLocation": { "desc": "获取当前位置以展示附近充电站" }
+  }
+}

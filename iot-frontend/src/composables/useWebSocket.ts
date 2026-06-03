@@ -17,7 +17,7 @@ export interface WsMessage {
 /** 消息处理器 */
 type MessageHandler = (msg: WsMessage) => void
 
-export function useWebSocket(userId: number = 0) {
+export function useWebSocket(userIdOrUrl: number | string = 0) {
   const connected = ref(false)
   const lastMessage = ref<WsMessage | null>(null)
 
@@ -33,8 +33,10 @@ export function useWebSocket(userId: number = 0) {
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    // 直连 Spring Boot 后端 WebSocket（端口 8080），绕过 Vite 代理
-    const url = `${protocol}//localhost:8080/ws/charge?userId=${userId}`
+    // userIdOrUrl 为字符串时作为完整 WebSocket URL，为数字时使用默认充电推送地址
+    const url = typeof userIdOrUrl === 'string'
+      ? userIdOrUrl
+      : `${protocol}//localhost:8080/ws/charge?userId=${userIdOrUrl}`
 
     try {
       ws = new WebSocket(url)

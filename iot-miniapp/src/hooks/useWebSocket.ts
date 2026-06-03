@@ -1,0 +1,95 @@
+import { ref, onUnmounted } from 'vue'
+import { WS_BASE_URL } from '@/utils/constants'
+
+export interface WsMessage {
+  type: string
+  data: any
+  timestamp: number
+}
+
+type MessageHandler = (msg: WsMessage) => void
+
+/**
+ * WebSocket Hook（uni-app 适配版）
+ * <p>
+ * 使用 uni.connectSocket API，支持自动重连和消息分发。
+ * 页面 onHide 时自动断开，onShow 时自动重连（由调用方管理）。
+ * </p>
+ *
+ * @param path WebSocket 路径（如 /charge/ORD123）
+ */
+export function useWebSocket(path: string) {
+  const connected = ref(false)
+  const lastMessage = ref<WsMessage | null>(null)
+
+  let socketTask: UniApp.SocketTask | null = null
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  const handlers = new Map<string, Set<MessageHandler>>()
+
+  /** 建立连接 */
+  function connect() {
+    if (socketTask) return
+
+    const url = `${WS_BASE_URL}${path}`
+    socketTask = uni.connectSocket({ url, complete: () => {} })
+
+    socketTask.onOpen(() => {
+      connected.value = true
+      console.log('[WS] 连接成功:', url)
+    })
+
+    socketTask.onMessage((res) => {
+      try {
+        const msg: WsMessage = JSON.parse(res.data as string)
+        lastMessage.value = msg
+        const typeHandlers = handlers.get(msg.type)
+        if (typeHandlers) typeHandlers.forEach(fn => fn(msg))
+        const allHandlers = handlers.get('*')
+        if (allHandlers) allHandlers.forEach(fn => fn(msg))
+      } catch { /* JSON 解析失败，忽略 */ }
+    })
+
+    socketTask.onClose(() => {
+      connected.value = false
+      socketTask = null
+      // 3 秒后自动重连
+      reconnectTimer = setTimeout(connect, 3000)
+    })
+
+    socketTask.onError((err) => {
+      console.error('[WS] 连接错误:', err)
+      socketTask?.close()
+      socketTask = null
+    })
+  }
+
+  /** 断开连接 */
+  function disconnect() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    if (socketTask) {
+      socketTask.close()
+      socketTask = null
+    }
+    connected.value = false
+  }
+
+  /** 注册消息处理器 */
+  function onMessage(type: string, handler: MessageHandler) {
+    if (!handlers.has(type)) handlers.set(type, new Set())
+    handlers.get(type)!.add(handler)
+  }
+
+  /** 发送消息 */
+  function send(data: object) {
+    if (socketTask) {
+      socketTask.send({ data: JSON.stringify(data) })
+    }
+  }
+
+  onUnmounted(() => disconnect())
+
+  return { connected, lastMessage, connect, disconnect, onMessage, send }
+}

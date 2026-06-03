@@ -126,6 +126,27 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
+     * 通过订单号获取订单详情（避免前端雪花ID精度丢失）
+     */
+    @Override
+    public OrderVO getOrderDetailByOrderNo(String orderNo, Long userId) {
+        ChargeOrder order = chargeOrderMapper.selectOne(
+                new LambdaQueryWrapper<ChargeOrder>().eq(ChargeOrder::getOrderNo, orderNo)
+        );
+        if (order == null) {
+            throw new BusinessException(404, "订单不存在");
+        }
+        if (userId != null && !order.getUserId().equals(userId)) {
+            throw new BusinessException(403, "无权查看该订单");
+        }
+
+        Charger charger = chargerMapper.selectById(order.getChargerId());
+        Station station = stationMapper.selectById(order.getStationId());
+
+        return buildOrderVO(order, charger, station);
+    }
+
+    /**
      * 模拟支付
      * <p>
      * 支付条件：订单状态为已完成(COMPLETED) 且 支付状态为未支付(UNPAID)。

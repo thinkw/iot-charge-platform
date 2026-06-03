@@ -1,0 +1,29 @@
+{
+  "name": "iot-charge-miniapp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "IoT充电桩智能运营平台 - 微信小程序用户端",
+  "scripts": {
+    "dev:mp-weixin": "uni -p mp-weixin",
+    "build:mp-weixin": "uni build -p mp-weixin"
+  },
+  "dependencies": {
+    "@dcloudio/uni-app": "3.0.0-alpha-5010220260529001",
+    "@dcloudio/uni-components": "3.0.0-alpha-5010220260529001",
+    "@dcloudio/uni-mp-weixin": "3.0.0-alpha-5010220260529001",
+    "pinia": "^2.2.4",
+    "uview-plus": "^3.5.0",
+    "vue": "^3.4.21"
+  },
+  "devDependencies": {
+    "@dcloudio/types": "3.4.31",
+    "@dcloudio/uni-automator": "3.0.0-alpha-5010220260529001",
+    "@dcloudio/uni-cli-shared": "3.0.0-alpha-5010220260529001",
+    "@dcloudio/uni-stacktracey": "3.0.0-alpha-5010220260529001",
+    "@dcloudio/vite-plugin-uni": "3.0.0-alpha-5010220260529001",
+    "sass": "^1.77.0",
+    "typescript": "^4.9.4",
+    "vite": "5.2.8",
+    "vue-tsc": "^1.0.24"
+  }
+}

@@ -1,6 +1,7 @@
 package com.iot.core.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.iot.common.exception.BusinessException;
 import com.iot.core.dto.request.LoginRequest;
 import com.iot.core.dto.request.RegisterRequest;
@@ -146,5 +147,60 @@ public class UserServiceImpl implements UserService {
                 .plateNo(user.getPlateNo())
                 .carModel(user.getCarModel())
                 .build();
+    }
+
+    // ==================== 管理端方法 ====================
+
+    /**
+     * 管理端 — 分页查询用户列表
+     * <p>
+     * 支持按手机号模糊搜索和状态筛选。
+     * 不返回密码字段。
+     * </p>
+     */
+    @Override
+    public List<User> adminListUsers(String phone, Integer status, int page, int size) {
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+        wrapper.like(phone != null && !phone.isBlank(), User::getPhone, phone);
+        wrapper.eq(status != null, User::getStatus, status);
+        wrapper.orderByDesc(User::getCreateTime);
+
+        Page<User> pageResult = userMapper.selectPage(new Page<>(page, size), wrapper);
+        // 脱敏处理：清除密码字段
+        pageResult.getRecords().forEach(user -> user.setPassword(null));
+        return pageResult.getRecords();
+    }
+
+    /**
+     * 管理端 — 查询用户总数
+     */
+    @Override
+    public long adminCountUsers(String phone, Integer status) {
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+        wrapper.like(phone != null && !phone.isBlank(), User::getPhone, phone);
+        wrapper.eq(status != null, User::getStatus, status);
+        return userMapper.selectCount(wrapper);
+    }
+
+    /**
+     * 管理端 — 启用/禁用用户
+     * <p>
+     * 修改用户状态。禁用后该用户无法登录，登录接口会抛出 403。
+     * </p>
+     */
+    @Override
+    public void adminUpdateUserStatus(Long userId, Integer status) {
+        if (status != 0 && status != 1) {
+            throw new BusinessException(400, "状态值必须为0（禁用）或1（启用）");
+        }
+
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException(404, "用户不存在");
+        }
+
+        user.setStatus(status);
+        userMapper.updateById(user);
+        log.info("[用户管理] 更新用户状态 - userId: {}, status: {}", userId, status);
     }
 }

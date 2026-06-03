@@ -36,7 +36,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { Monitor, SwitchButton } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
-import { clearAuth } from '@/utils/auth'
+import { useAuthStore } from '@/stores/authStore'
 import { useRouter } from 'vue-router'
 
 /** 接收父组件传入的 WebSocket 连接状态 */
@@ -49,6 +49,7 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
+const authStore = useAuthStore()
 
 /** 当前时间（每秒刷新） */
 const currentTime = ref('')
@@ -86,7 +87,7 @@ function handleLogout() {
       type: 'warning'
     }
   ).then(() => {
-    clearAuth()
+    authStore.logout()
     router.replace('/login')
   }).catch(() => {
     // 用户取消，不做任何操作
