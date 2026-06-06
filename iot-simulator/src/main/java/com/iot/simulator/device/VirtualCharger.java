@@ -346,20 +346,54 @@ public class VirtualCharger {
     }
 
     /**
-     * 回复指令确认
+     * 回复指令确认（v2 协议，携带 commandId 用于去重和服务端匹配）
+     * <p>
+     * 响应格式：
+     * <pre>
+     * {
+     *   "commandId": "雪花ID",       // 对应下发指令的 commandId
+     *   "status": "SUCCESS",         // SUCCESS 或 ERROR
+     *   "errorCode": "",             // 错误码（status=ERROR 时）
+     *   "message": "充电已启动"       // 描述信息
+     * }
+     * </pre>
+     * </p>
+     *
+     * @param commandId 指令唯一ID（对应服务端下发的 commandId）
+     * @param command   指令类型（用于日志）
+     * @param success   是否执行成功
+     * @param message   结果描述
      */
-    public void sendCommandResponse(String command, boolean success) {
+    public void sendCommandResponse(String commandId, String command, boolean success, String message) {
         try {
             Map<String, Object> resp = new HashMap<>();
-            resp.put("sn", sn);
-            resp.put("command", command);
-            resp.put("success", success);
-            resp.put("timestamp", System.currentTimeMillis());
+            resp.put("commandId", commandId);
+            resp.put("status", success ? "SUCCESS" : "ERROR");
+            resp.put("errorCode", success ? "" : "EXEC_FAILED");
+            resp.put("message", message);
 
             publish(TOPIC_COMMAND_RESPONSE, JSONUtil.toJsonStr(resp), 1);
+            log.info("[{}] 指令响应已发送 - commandId: {}, command: {}, status: {}",
+                    sn, commandId, command, success ? "SUCCESS" : "ERROR");
         } catch (Exception e) {
             log.warn("[{}] 指令响应发送失败: {}", sn, e.getMessage());
         }
+    }
+
+    /**
+     * 回复指令确认（v1 兼容，自动从消息 payload 中提取 commandId 失败时回退）
+     * <p>
+     * 优先使用 {@link #sendCommandResponse(String, String, boolean, String)} 明确传递 commandId。
+     * 此方法仅在无法获取 commandId 时作为回退使用。
+     * </p>
+     *
+     * @param command 指令类型
+     * @param success 是否执行成功
+     * @deprecated 使用 {@link #sendCommandResponse(String, String, boolean, String)} 代替
+     */
+    @Deprecated
+    public void sendCommandResponse(String command, boolean success) {
+        sendCommandResponse("unknown", command, success, success ? "已执行" : "执行失败");
     }
 
     // ==================== 充电模拟 ====================
@@ -371,14 +405,14 @@ public class VirtualCharger {
      * </p>
      */
     public void startCharging() {
-        reportStatus(DeviceStatusEnum.CHARGING);
-
-        // 初始化充电数据
+        // 初始化充电数据（先于状态上报，保证状态上报携带的第一帧 data 是真实值）
         this.voltage = 220 + Math.random() * 20;        // 220-240V
         this.current = 10 + Math.random() * 20;          // 10-30A
         this.power = voltage * current / 1000.0;         // kW
         this.chargedEnergy = 0;
         this.temperature = 30 + Math.random() * 10;      // 30-40℃
+
+        reportStatus(DeviceStatusEnum.CHARGING);
 
         // 每5秒上报一次实时数据
         dataReportFuture = scheduler.scheduleAtFixedRate(() -> {

@@ -20,12 +20,16 @@ public interface ChargeEventPublisher {
      * @param currentPower    当前功率(kW)
      * @param estimatedAmount 估算费用(元)
      * @param durationSeconds 已充时长(秒)
+     * @param voltage         当前电压(V)，可能为 null（后端暂未透传时）
+     * @param current         当前电流(A)，可能为 null
      */
     void publishChargeProgress(Long userId, String orderNo,
                                java.math.BigDecimal chargedEnergy,
                                java.math.BigDecimal currentPower,
                                java.math.BigDecimal estimatedAmount,
-                               Long durationSeconds);
+                               Long durationSeconds,
+                               java.math.BigDecimal voltage,
+                               java.math.BigDecimal current);
 
     /**
      * 推送充电开始通知
@@ -44,4 +48,23 @@ public interface ChargeEventPublisher {
      * @param totalAmount 总金额(元)
      */
     void publishChargeStop(Long userId, String orderNo, java.math.BigDecimal totalAmount);
+
+    /**
+     * 推送指令执行状态通知
+     * <p>
+     * 用于混合模式启桩流程中告知用户指令执行进度。
+     * 在以下场景触发：
+     * <ul>
+     *   <li>同步等待超时 → 推送 "PENDING" 状态，告知用户设备正在启动中</li>
+     *   <li>异步补偿超时 → 推送 "TIMEOUT" 状态，告知用户启动失败</li>
+     *   <li>对账确认成功 → 推送 "SUCCESS" 状态，告知用户充电已开始</li>
+     * </ul>
+     * </p>
+     *
+     * @param userId  用户ID
+     * @param orderNo 订单编号
+     * @param status  指令状态（PENDING/SUCCESS/FAILED/TIMEOUT）
+     * @param message 提示消息（面向用户展示）
+     */
+    void publishCommandStatus(Long userId, String orderNo, String status, String message);
 }

@@ -8,6 +8,15 @@ function navigateToLogin() {
 }
 
 /**
+ * 统一处理 401 未认证：清空本地凭证 + 跳转登录页
+ * 业务 code=401 与 HTTP status=401 共用此函数
+ */
+function handle401() {
+  clearAuth()
+  navigateToLogin()
+}
+
+/**
  * 共享 axios 实例
  * <p>
  * 所有 API 模块通过此实例发送请求，统一处理：
@@ -44,8 +53,7 @@ http.interceptors.response.use(
       }
       // 401 未认证 → 跳转登录
       if (body.code === 401) {
-        clearAuth()
-        navigateToLogin()
+        handle401()
         return Promise.reject(new Error('登录已过期，请重新登录'))
       }
       // 其他业务错误
@@ -57,8 +65,7 @@ http.interceptors.response.use(
   },
   (error) => {
     if (error.response?.status === 401) {
-      clearAuth()
-      navigateToLogin()
+      handle401()
     } else if (error.response?.data?.message) {
       ElMessage.error(error.response.data.message)
     } else if (error.message) {

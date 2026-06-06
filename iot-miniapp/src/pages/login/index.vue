@@ -10,7 +10,8 @@
         <text class="form-label">手机号</text>
         <input
           v-model="phone"
-          type="number"
+          type="text"
+          inputmode="numeric"
           maxlength="11"
           placeholder="请输入手机号"
           class="login-input"

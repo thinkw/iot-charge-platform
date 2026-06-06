@@ -3,6 +3,7 @@ package com.iot.core.service;
 import com.iot.common.enums.DeviceStatusEnum;
 import com.iot.common.enums.OrderStatusEnum;
 import com.iot.common.exception.BusinessException;
+import com.iot.common.model.CommandResult;
 import com.iot.core.dto.response.ChargeStatusVO;
 import com.iot.core.entity.ChargeOrder;
 import com.iot.core.entity.Charger;
@@ -185,10 +186,11 @@ class ChargeServiceTest {
         }
 
         @Test
-        @DisplayName("正常启桩（IDLE状态）→ 返回 ChargeOrder，orderStatus=CHARGING")
+        @DisplayName("正常启桩（设备SUCCESS）→ 返回 ChargeOrder，orderStatus=CHARGING")
         void startCharge_success() {
             when(chargerMapper.selectById(CHARGER_ID)).thenReturn(idleCharger);
-            when(deviceService.sendCommand(anyString(), anyString(), anyMap())).thenReturn(true);
+            when(deviceService.sendCommandAndWait(anyString(), anyString(), anyMap(),
+                    anyString(), anyLong(), anyLong())).thenReturn(CommandResult.SUCCESS);
             when(chargeOrderMapper.insert(any(ChargeOrder.class))).thenReturn(1);
 
             ChargeOrder result = chargeService.startCharge(USER_ID, CHARGER_ID);
@@ -202,22 +204,25 @@ class ChargeServiceTest {
         }
 
         @Test
-        @DisplayName("正常启桩 → verify 调用 deviceService.sendCommand('START_CHARGE')")
+        @DisplayName("正常启桩 → verify 调用 deviceService.sendCommandAndWait('START_CHARGE')")
         void startCharge_verifySendCommand() {
             when(chargerMapper.selectById(CHARGER_ID)).thenReturn(idleCharger);
-            when(deviceService.sendCommand(anyString(), anyString(), anyMap())).thenReturn(true);
+            when(deviceService.sendCommandAndWait(anyString(), anyString(), anyMap(),
+                    anyString(), anyLong(), anyLong())).thenReturn(CommandResult.SUCCESS);
             when(chargeOrderMapper.insert(any(ChargeOrder.class))).thenReturn(1);
 
             chargeService.startCharge(USER_ID, CHARGER_ID);
 
-            verify(deviceService).sendCommand(eq(SN), eq("START_CHARGE"), anyMap());
+            verify(deviceService).sendCommandAndWait(eq(SN), eq("START_CHARGE"),
+                    anyMap(), anyString(), eq(USER_ID), eq(3000L));
         }
 
         @Test
         @DisplayName("正常启桩 → verify 调用 chargeEventProducer.publishChargeStartEvent()")
         void startCharge_verifyPublishEvent() {
             when(chargerMapper.selectById(CHARGER_ID)).thenReturn(idleCharger);
-            when(deviceService.sendCommand(anyString(), anyString(), anyMap())).thenReturn(true);
+            when(deviceService.sendCommandAndWait(anyString(), anyString(), anyMap(),
+                    anyString(), anyLong(), anyLong())).thenReturn(CommandResult.SUCCESS);
             when(chargeOrderMapper.insert(any(ChargeOrder.class))).thenReturn(1);
 
             chargeService.startCharge(USER_ID, CHARGER_ID);
@@ -226,17 +231,45 @@ class ChargeServiceTest {
         }
 
         @Test
-        @DisplayName("MQTT指令下发失败（sendCommand返回false）→ 不抛异常，订单仍创建成功")
-        void startCharge_commandFailed_stillSucceeds() {
+        @DisplayName("设备不在线（sendCommandAndWait返回null）→ 抛出 BusinessException(503)，订单已取消")
+        void startCharge_deviceOffline_throwsException() {
             when(chargerMapper.selectById(CHARGER_ID)).thenReturn(idleCharger);
-            when(deviceService.sendCommand(anyString(), anyString(), anyMap())).thenReturn(false);
+            when(deviceService.sendCommandAndWait(anyString(), anyString(), anyMap(),
+                    anyString(), anyLong(), anyLong())).thenReturn(null);
             when(chargeOrderMapper.insert(any(ChargeOrder.class))).thenReturn(1);
 
-            assertDoesNotThrow(() -> {
-                ChargeOrder result = chargeService.startCharge(USER_ID, CHARGER_ID);
-                assertNotNull(result);
-                assertEquals(OrderStatusEnum.CHARGING.getCode(), result.getOrderStatus());
-            });
+            BusinessException ex = assertThrows(BusinessException.class,
+                    () -> chargeService.startCharge(USER_ID, CHARGER_ID));
+
+            assertEquals(503, ex.getCode());
+        }
+
+        @Test
+        @DisplayName("设备拒绝执行（DEVICE_ERROR）→ 抛出 BusinessException(500)，订单已取消")
+        void startCharge_deviceError_throwsException() {
+            when(chargerMapper.selectById(CHARGER_ID)).thenReturn(idleCharger);
+            when(deviceService.sendCommandAndWait(anyString(), anyString(), anyMap(),
+                    anyString(), anyLong(), anyLong())).thenReturn(CommandResult.DEVICE_ERROR);
+            when(chargeOrderMapper.insert(any(ChargeOrder.class))).thenReturn(1);
+
+            BusinessException ex = assertThrows(BusinessException.class,
+                    () -> chargeService.startCharge(USER_ID, CHARGER_ID));
+
+            assertEquals(500, ex.getCode());
+        }
+
+        @Test
+        @DisplayName("同步等待超时（TIMEOUT）→ 订单创建成功，状态为 PENDING_CONFIRM")
+        void startCharge_timeout_orderCreatedWithPendingConfirm() {
+            when(chargerMapper.selectById(CHARGER_ID)).thenReturn(idleCharger);
+            when(deviceService.sendCommandAndWait(anyString(), anyString(), anyMap(),
+                    anyString(), anyLong(), anyLong())).thenReturn(CommandResult.TIMEOUT);
+            when(chargeOrderMapper.insert(any(ChargeOrder.class))).thenReturn(1);
+
+            ChargeOrder result = chargeService.startCharge(USER_ID, CHARGER_ID);
+
+            assertNotNull(result);
+            assertEquals(OrderStatusEnum.PENDING_CONFIRM.getCode(), result.getOrderStatus());
         }
     }
 

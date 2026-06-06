@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { loginApi, registerApi, getUserInfoApi } from '@/api/auth'
+import { loginApi, registerApi, fetchUserInfoApi } from '@/api/auth'
 
 /**
  * 认证状态管理
@@ -18,13 +18,13 @@ export const useAuthStore = defineStore('auth', () => {
 
   /** 登录 */
   async function login(phone: string, password: string) {
-    const data = await loginApi(phone, password)
+    const data = await loginApi({ phone: String(phone), password })
     saveLoginState(data)
   }
 
   /** 注册 */
   async function register(phone: string, password: string, nickname?: string) {
-    const data = await registerApi(phone, password, nickname)
+    const data = await registerApi({ phone: String(phone), password, nickname })
     saveLoginState(data)
   }
 
@@ -49,7 +49,7 @@ export const useAuthStore = defineStore('auth', () => {
   /** 获取用户信息 */
   async function fetchUserInfo() {
     if (!isLoggedIn.value) return
-    try { userInfo.value = await getUserInfoApi() } catch { /* ignore */ }
+    try { userInfo.value = await fetchUserInfoApi() } catch { /* ignore */ }
   }
 
   return { token, user, userInfo, isLoggedIn, login, register, logout, fetchUserInfo }

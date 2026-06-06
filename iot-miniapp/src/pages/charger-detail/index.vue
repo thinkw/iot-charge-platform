@@ -29,7 +29,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getChargerDetail } from '@/api/charger'
+import { getChargerApi } from '@/api/charger'
 import { DEVICE_STATUS_MAP } from '@/utils/constants'
 import { useScanCode } from '@/hooks/useScanCode'
 
@@ -62,7 +62,7 @@ function goReserve() {
 
 onMounted(async () => {
   loading.value = true
-  try { charger.value = await getChargerDetail(chargerId) } catch { /* 后端不可用时忽略 */ } finally { loading.value = false }
+  try { charger.value = await getChargerApi(chargerId) } catch { /* 后端不可用时忽略 */ } finally { loading.value = false }
 })
 </script>
 

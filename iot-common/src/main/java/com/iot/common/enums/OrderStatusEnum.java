@@ -38,7 +38,17 @@ public enum OrderStatusEnum {
     /**
      * 异常
      */
-    ABNORMAL(4, "异常");
+    ABNORMAL(4, "异常"),
+
+    /**
+     * 待确认：订单已创建，等待设备确认指令执行结果
+     * <p>
+     * 该状态用于混合模式启桩流程：订单创建后同步等待 3 秒，
+     * 超时未收到设备响应时订单保持此状态，由异步补偿任务处理。
+     * 设备确认后转为 CHARGING，超时后转为 CANCELLED。
+     * </p>
+     */
+    PENDING_CONFIRM(5, "待确认");
 
     /** 状态码 */
     private final int code;

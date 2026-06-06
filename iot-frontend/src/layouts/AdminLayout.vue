@@ -4,7 +4,6 @@
     <el-menu
       :default-active="activeMenu"
       :collapse="isCollapse"
-      :router="true"
       class="admin-sidebar"
       background-color="#304156"
       text-color="#bfcbd9"
@@ -16,7 +15,7 @@
         <span v-show="!isCollapse" class="logo-text">IoT充电运营平台</span>
       </div>
 
-      <el-menu-item index="/admin/dashboard">
+      <el-menu-item index="/admin/dashboard" @click="router.push('/admin/dashboard')">
         <el-icon><DataAnalysis /></el-icon>
         <template #title>运营大屏</template>
       </el-menu-item>
@@ -26,13 +25,13 @@
           <el-icon><OfficeBuilding /></el-icon>
           <span>业务管理</span>
         </template>
-        <el-menu-item index="/admin/station">充电站管理</el-menu-item>
-        <el-menu-item index="/admin/charger">充电桩管理</el-menu-item>
-        <el-menu-item index="/admin/order">订单管理</el-menu-item>
-        <el-menu-item index="/admin/pricing">计费规则</el-menu-item>
+        <el-menu-item index="/admin/station" @click="router.push('/admin/station')">充电站管理</el-menu-item>
+        <el-menu-item index="/admin/charger" @click="router.push('/admin/charger')">充电桩管理</el-menu-item>
+        <el-menu-item index="/admin/order" @click="router.push('/admin/order')">订单管理</el-menu-item>
+        <el-menu-item index="/admin/pricing" @click="router.push('/admin/pricing')">计费规则</el-menu-item>
       </el-sub-menu>
 
-      <el-menu-item index="/admin/alarm">
+      <el-menu-item index="/admin/alarm" @click="router.push('/admin/alarm')">
         <el-icon><Bell /></el-icon>
         <template #title>告警管理</template>
       </el-menu-item>
@@ -42,9 +41,9 @@
           <el-icon><Setting /></el-icon>
           <span>系统管理</span>
         </template>
-        <el-menu-item index="/admin/system/user">用户管理</el-menu-item>
-        <el-menu-item index="/admin/system/role">角色管理</el-menu-item>
-        <el-menu-item index="/admin/system/log">操作日志</el-menu-item>
+        <el-menu-item index="/admin/system/user" @click="router.push('/admin/system/user')">用户管理</el-menu-item>
+        <el-menu-item index="/admin/system/role" @click="router.push('/admin/system/role')">角色管理</el-menu-item>
+        <el-menu-item index="/admin/system/log" @click="router.push('/admin/system/log')">操作日志</el-menu-item>
       </el-sub-menu>
     </el-menu>
 
@@ -110,13 +109,16 @@ import {
   Fold, Expand, UserFilled, ArrowDown
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/authStore'
+import { useDashboardStore } from '@/stores/dashboardStore'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const dashboardStore = useDashboardStore()
 
 const isCollapse = ref(false)
-const wsConnected = ref(false) // 后续集成 WebSocket 时更新
+// 大屏 WS 连接状态（DashboardView 内部维护，AdminLayout 仅展示）
+const wsConnected = computed(() => dashboardStore.wsConnected)
 
 /** 当前激活的菜单项（用于高亮） */
 const activeMenu = computed(() => route.path)

@@ -6,6 +6,7 @@ import com.iot.common.enums.DeviceStatusEnum;
 import com.iot.common.enums.OrderStatusEnum;
 import com.iot.common.enums.PayStatusEnum;
 import com.iot.common.exception.BusinessException;
+import com.iot.common.model.CommandResult;
 import com.iot.common.util.SnowflakeIdUtil;
 import com.iot.core.dto.response.ChargeStatusVO;
 import com.iot.core.entity.ChargeOrder;
@@ -122,16 +123,13 @@ public class ChargeServiceImpl implements ChargeService {
                 throw new BusinessException(409, "设备状态已变更，请刷新重试");
             }
 
-            // 5. 更新充电桩状态为充电中
-            freshCharger.setStatus(DeviceStatusEnum.CHARGING.getCode());
-            chargerMapper.updateById(freshCharger);
+            // 记录设备当前状态，用于失败时回滚
+            int prevChargerStatus = freshCharger.getStatus();
+            String sn = freshCharger.getSn();
+            String statusKey = REDIS_KEY_DEVICE_STATUS + sn;
 
-            // 同步更新 Redis 状态
-            String statusKey = REDIS_KEY_DEVICE_STATUS + freshCharger.getSn();
-            redisTemplate.opsForHash().put(statusKey, "status",
-                    String.valueOf(DeviceStatusEnum.CHARGING.getCode()));
-
-            // 6. 创建充电订单（先充后付）
+            // 5. 创建充电订单 — 状态为 PENDING_CONFIRM（等待设备确认）
+            //    注意：充电桩状态暂不修改，等设备确认后再更新
             String orderNo = OrderConstants.ORDER_NO_PREFIX + SnowflakeIdUtil.nextIdStr();
             ChargeOrder order = new ChargeOrder();
             order.setOrderNo(orderNo);
@@ -139,26 +137,61 @@ public class ChargeServiceImpl implements ChargeService {
             order.setChargerId(chargerId);
             order.setStationId(freshCharger.getStationId());
             order.setStartTime(LocalDateTime.now());
-            order.setOrderStatus(OrderStatusEnum.CHARGING.getCode());
+            order.setOrderStatus(OrderStatusEnum.PENDING_CONFIRM.getCode());  // ← 待确认状态
             order.setPayStatus(PayStatusEnum.UNPAID.getCode());
             chargeOrderMapper.insert(order);
 
-            log.info("[启桩] 订单已创建 - orderNo: {}, chargerId: {}", orderNo, chargerId);
+            log.info("[启桩] 订单已创建（待确认） - orderNo: {}, chargerId: {}", orderNo, chargerId);
 
-            // 7. MQTT 下发启动指令（best-effort，设备离线也不阻塞）
-            Map<String, Object> params = new HashMap<>();
-            params.put("orderNo", orderNo);
-            params.put("userId", userId);
-            boolean cmdSent = deviceService.sendCommand(freshCharger.getSn(), "START_CHARGE", params);
-            if (!cmdSent) {
-                log.warn("[启桩] MQTT 指令下发失败 - orderNo: {}, sn: {}，设备可能离线", orderNo, freshCharger.getSn());
+            // 6. MQTT 下发启动指令 + 同步等待 3 秒（混合模式核心）
+            Map<String, Object> cmdParams = new HashMap<>();
+            cmdParams.put("orderNo", orderNo);
+            cmdParams.put("userId", userId);
+
+            CommandResult result = deviceService.sendCommandAndWait(
+                    sn, "START_CHARGE", cmdParams, orderNo, userId, 3000);
+
+            if (result == null) {
+                // 设备不在线：取消订单，充电桩状态保持不变（无需回滚）
+                log.warn("[启桩] 设备不在线，取消订单 - orderNo: {}, sn: {}", orderNo, sn);
+                order.setOrderStatus(OrderStatusEnum.CANCELLED.getCode());
+                chargeOrderMapper.updateById(order);
+                throw new BusinessException(503, "设备不在线，无法启动充电");
             }
 
-            // 8. 推送充电开始事件
-            publishChargeStart(userId, orderNo, chargerId);
+            switch (result) {
+                case SUCCESS -> {
+                    // 设备确认启动成功 → 更新充电桩为充电中 + 订单为 CHARGING
+                    log.info("[启桩] 设备确认启动成功 - orderNo: {}, chargerId: {}", orderNo, chargerId);
+                    freshCharger.setStatus(DeviceStatusEnum.CHARGING.getCode());
+                    chargerMapper.updateById(freshCharger);
+                    redisTemplate.opsForHash().put(statusKey, "status",
+                            String.valueOf(DeviceStatusEnum.CHARGING.getCode()));
 
-            // 9. 发送 RocketMQ 事件
-            chargeEventProducer.publishChargeStartEvent(order);
+                    order.setOrderStatus(OrderStatusEnum.CHARGING.getCode());
+                    chargeOrderMapper.updateById(order);
+
+                    // 推送充电开始事件
+                    publishChargeStart(userId, orderNo, chargerId);
+                    chargeEventProducer.publishChargeStartEvent(order);
+                }
+
+                case DEVICE_ERROR -> {
+                    // 设备拒绝执行 → 取消订单
+                    log.warn("[启桩] 设备拒绝启动 - orderNo: {}, chargerId: {}", orderNo, chargerId);
+                    order.setOrderStatus(OrderStatusEnum.CANCELLED.getCode());
+                    chargeOrderMapper.updateById(order);
+                    throw new BusinessException(500, "设备启动失败，订单已取消");
+                }
+
+                case TIMEOUT -> {
+                    // 同步等待超时 → 订单保持 PENDING_CONFIRM，异步补偿继续
+                    log.warn("[启桩] 同步等待超时，转入异步补偿 - orderNo: {}, chargerId: {}",
+                            orderNo, chargerId);
+                    // 推送"启动中"状态
+                    publishCommandStatus(userId, orderNo, "PENDING", "设备正在启动中，请稍候...");
+                }
+            }
 
             return order;
 
@@ -178,8 +211,8 @@ public class ChargeServiceImpl implements ChargeService {
     /**
      * 结束充电
      * <p>
-     * 下发停止指令后，从充电桩读取最终充电数据，
-     * 调用计费服务计算费用，更新订单和充电桩状态。
+     * 对于 CHARGING 状态订单：下发停止指令、计费、更新状态。
+     * 对于 PENDING_CONFIRM 状态订单：直接取消（设备尚未确认启动，无需下发停止指令）。
      * </p>
      */
     @Override
@@ -189,6 +222,16 @@ public class ChargeServiceImpl implements ChargeService {
 
         // 1. 查找并校验订单
         ChargeOrder order = findAndValidateOrder(orderNo, userId);
+
+        // 1.5 特殊处理：PENDING_CONFIRM 订单直接取消，无需下发指令和计费
+        if (order.getOrderStatus() == OrderStatusEnum.PENDING_CONFIRM.getCode()) {
+            log.info("[停桩] PENDING_CONFIRM 订单直接取消 - orderNo: {}", orderNo);
+            order.setOrderStatus(OrderStatusEnum.CANCELLED.getCode());
+            chargeOrderMapper.updateById(order);
+            // 推送取消通知
+            publishCommandStatus(userId, orderNo, "CANCELLED", "订单已取消");
+            return order;
+        }
 
         // 2. 查找充电桩
         Charger charger = chargerMapper.selectById(order.getChargerId());
@@ -371,6 +414,12 @@ public class ChargeServiceImpl implements ChargeService {
             BigDecimal currentPower = data.containsKey("power") && data.get("power") != null
                     ? new BigDecimal(data.get("power").toString())
                     : BigDecimal.ZERO;
+            BigDecimal voltage = data.containsKey("voltage") && data.get("voltage") != null
+                    ? new BigDecimal(data.get("voltage").toString())
+                    : null;
+            BigDecimal current = data.containsKey("current") && data.get("current") != null
+                    ? new BigDecimal(data.get("current").toString())
+                    : null;
 
             // 计算估算费用
             BigDecimal estimatedAmount = pricingService.estimateFee(
@@ -382,7 +431,8 @@ public class ChargeServiceImpl implements ChargeService {
 
             // 通过 ChargeEventPublisher 推送进度
             publishChargeProgress(chargingOrder.getUserId(), chargingOrder.getOrderNo(),
-                    chargedEnergy, currentPower, estimatedAmount, durationSeconds);
+                    chargedEnergy, currentPower, estimatedAmount, durationSeconds,
+                    voltage, current);
 
         } catch (Exception e) {
             log.warn("[充电进度推送] 处理设备数据上报事件失败 - chargerId: {}, error: {}",
@@ -396,11 +446,13 @@ public class ChargeServiceImpl implements ChargeService {
      * 推送充电进度（null-safe）
      */
     private void publishChargeProgress(Long userId, String orderNo, BigDecimal chargedEnergy,
-                                        BigDecimal currentPower, BigDecimal estimatedAmount,
-                                        Long durationSeconds) {
+                                       BigDecimal currentPower, BigDecimal estimatedAmount,
+                                       Long durationSeconds,
+                                       BigDecimal voltage, BigDecimal current) {
         if (chargeEventPublisher != null) {
             chargeEventPublisher.publishChargeProgress(
-                    userId, orderNo, chargedEnergy, currentPower, estimatedAmount, durationSeconds);
+                    userId, orderNo, chargedEnergy, currentPower, estimatedAmount,
+                    durationSeconds, voltage, current);
         }
     }
 
@@ -419,6 +471,23 @@ public class ChargeServiceImpl implements ChargeService {
     private void publishChargeStop(Long userId, String orderNo, BigDecimal totalAmount) {
         if (chargeEventPublisher != null) {
             chargeEventPublisher.publishChargeStop(userId, orderNo, totalAmount);
+        }
+    }
+
+    /**
+     * 推送指令执行状态（null-safe）
+     * <p>
+     * 用于混合模式启桩流程中向用户推送指令执行进度。
+     * </p>
+     *
+     * @param userId  用户ID
+     * @param orderNo 订单编号
+     * @param status  指令状态（PENDING/SUCCESS/FAILED/TIMEOUT）
+     * @param message 提示消息
+     */
+    private void publishCommandStatus(Long userId, String orderNo, String status, String message) {
+        if (chargeEventPublisher != null) {
+            chargeEventPublisher.publishCommandStatus(userId, orderNo, status, message);
         }
     }
 
@@ -442,7 +511,9 @@ public class ChargeServiceImpl implements ChargeService {
         if (!order.getUserId().equals(userId)) {
             throw new BusinessException(403, "无权操作该订单");
         }
-        if (order.getOrderStatus() != OrderStatusEnum.CHARGING.getCode()) {
+        // 仅允许 CHARGING（正常充电中）和 PENDING_CONFIRM（等待设备确认）状态操作
+        if (order.getOrderStatus() != OrderStatusEnum.CHARGING.getCode()
+                && order.getOrderStatus() != OrderStatusEnum.PENDING_CONFIRM.getCode()) {
             throw new BusinessException(409, "订单状态不允许此操作，当前状态: "
                     + OrderStatusEnum.fromCode(order.getOrderStatus()).getDesc());
         }

@@ -146,9 +146,9 @@ class DeviceServiceTest {
     }
 
     @Test
-    @DisplayName("状态机 - OFFLINE→CHARGING，非法")
-    void validateTransition_OfflineToCharging_Invalid() {
-        assertFalse(deviceService.validateStatusTransition(0, 2));
+    @DisplayName("状态机 - OFFLINE→CHARGING，合法（断电恢复继续充电）")
+    void validateTransition_OfflineToCharging_Valid() {
+        assertTrue(deviceService.validateStatusTransition(0, 2));
     }
 
     @Test
@@ -158,9 +158,9 @@ class DeviceServiceTest {
     }
 
     @Test
-    @DisplayName("状态机 - IDLE→CHARGING，非法（需先锁定）")
-    void validateTransition_IdleToCharging_Invalid() {
-        assertFalse(deviceService.validateStatusTransition(1, 2));
+    @DisplayName("状态机 - IDLE→CHARGING，合法（扫码启动充电）")
+    void validateTransition_IdleToCharging_Valid() {
+        assertTrue(deviceService.validateStatusTransition(1, 2));
     }
 
     @Test

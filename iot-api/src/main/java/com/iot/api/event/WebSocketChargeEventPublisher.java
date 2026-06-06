@@ -33,16 +33,25 @@ public class WebSocketChargeEventPublisher implements ChargeEventPublisher {
     @Override
     public void publishChargeProgress(Long userId, String orderNo,
                                        BigDecimal chargedEnergy, BigDecimal currentPower,
-                                       BigDecimal estimatedAmount, Long durationSeconds) {
+                                       BigDecimal estimatedAmount, Long durationSeconds,
+                                       BigDecimal voltage, BigDecimal current) {
         Map<String, Object> data = new HashMap<>();
         data.put("orderNo", orderNo);
-        data.put("chargedEnergy", chargedEnergy);
-        data.put("currentPower", currentPower);
-        data.put("estimatedAmount", estimatedAmount);
-        data.put("durationSeconds", durationSeconds);
+        // BigDecimal 用 toPlainString 防止 Hutool 序列化为科学计数法或被当成 0 丢字段
+        data.put("chargedEnergy", chargedEnergy == null ? "0" : chargedEnergy.toPlainString());
+        data.put("currentPower", currentPower == null ? "0" : currentPower.toPlainString());
+        data.put("estimatedAmount", estimatedAmount == null ? "0" : estimatedAmount.toPlainString());
+        data.put("durationSeconds", durationSeconds == null ? 0L : durationSeconds);
+        if (voltage != null) {
+            data.put("voltage", voltage.toPlainString());
+        }
+        if (current != null) {
+            data.put("current", current.toPlainString());
+        }
 
         sessionManager.sendToUser(userId, "CHARGE_PROGRESS", data);
-        log.debug("[WS推送] 充电进度 - userId: {}, orderNo: {}", userId, orderNo);
+        log.debug("[WS推送] 充电进度 - userId: {}, orderNo: {}, energy: {}, power: {}, fee: {}, duration: {}s",
+                userId, orderNo, chargedEnergy, currentPower, estimatedAmount, durationSeconds);
     }
 
     /**
@@ -72,5 +81,24 @@ public class WebSocketChargeEventPublisher implements ChargeEventPublisher {
         sessionManager.sendToUser(userId, "CHARGE_STOP", data);
         log.debug("[WS推送] 充电停止 - userId: {}, orderNo: {}, amount: {}",
                 userId, orderNo, totalAmount);
+    }
+
+    /**
+     * 推送指令执行状态通知
+     * <p>
+     * 用于向用户实时反馈指令执行进度。
+     * WebSocket 消息类型为 COMMAND_STATUS。
+     * </p>
+     */
+    @Override
+    public void publishCommandStatus(Long userId, String orderNo, String status, String message) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("orderNo", orderNo);
+        data.put("status", status);
+        data.put("message", message);
+
+        sessionManager.sendToUser(userId, "COMMAND_STATUS", data);
+        log.info("[WS推送] 指令状态 - userId: {}, orderNo: {}, status: {}, message: {}",
+                userId, orderNo, status, message);
     }
 }

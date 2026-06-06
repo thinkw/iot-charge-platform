@@ -5,6 +5,7 @@ import cn.hutool.json.JSONUtil;
 import com.iot.access.mqtt.MqttSessionManager;
 import com.iot.access.mqtt.codec.MqttMessage;
 import com.iot.access.mqtt.codec.MqttMessageType;
+import com.iot.access.mqtt.command.CommandResponseManager;
 import com.iot.core.service.DeviceService;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
@@ -53,6 +54,7 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
 
     private final DeviceService deviceService;
     private final MqttSessionManager sessionManager;
+    private final CommandResponseManager commandResponseManager;
 
     // ==================== 连接生命周期 ====================
 
@@ -195,8 +197,9 @@ public class MqttMessageHandler extends SimpleChannelInboundHandler<MqttMessage>
                 }
 
                 case TOPIC_COMMAND_RESPONSE -> {
-                    // 指令响应：记录日志即可，业务方通过其他机制获取响应
+                    // 指令响应：交由 CommandResponseManager 处理响应匹配和业务回调
                     log.info("[MQTT] 指令响应 - SN: {}, payload: {}", sn, payload);
+                    commandResponseManager.handleResponse(sn, payload);
                 }
 
                 default -> log.debug("[MQTT] 未知 topic: {}, 忽略", topic);

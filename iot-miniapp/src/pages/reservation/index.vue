@@ -41,7 +41,7 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { createReservation, cancelReservation } from '@/api/reservation'
+import { createReservationApi, cancelReservationApi } from '@/api/reservation'
 
 const form = reactive({ chargerId: 0, reserveDate: '', startTime: '', endTime: '' })
 const submitting = ref(false)
@@ -70,7 +70,7 @@ async function handleSubmit() {
   submitting.value = true
   errorMsg.value = ''
   try {
-    const orderNo: any = await createReservation({
+    const orderNo: any = await createReservationApi({
       chargerId: form.chargerId,
       reserveDate: form.reserveDate,
       startTime: form.startTime + ':00',
@@ -92,7 +92,7 @@ async function handleCancel() {
       if (res.confirm) {
         cancelLoading.value = true
         try {
-          await cancelReservation(lastOrderNo.value)
+          await cancelReservationApi(lastOrderNo.value)
           uni.showToast({ title: '已取消', icon: 'success' })
           showCancel.value = false
         } catch { /* 错误已在 request 层处理 */ }

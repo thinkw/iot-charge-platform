@@ -10,10 +10,15 @@ import com.iot.common.exception.BusinessException;
 import com.iot.core.entity.Alarm;
 import com.iot.core.entity.Charger;
 import com.iot.core.entity.DeviceLog;
+import com.iot.common.enums.OrderStatusEnum;
+import com.iot.core.entity.ChargeOrder;
 import com.iot.core.mapper.AlarmMapper;
+import com.iot.core.mapper.ChargeOrderMapper;
 import com.iot.core.mapper.ChargerMapper;
 import com.iot.core.mapper.DeviceLogMapper;
+import com.iot.common.model.CommandResult;
 import com.iot.core.event.DeviceDataReportEvent;
+import com.iot.core.service.ChargeEventPublisher;
 import com.iot.core.service.DeviceCommandSender;
 import com.iot.core.service.DeviceService;
 import lombok.RequiredArgsConstructor;
@@ -80,6 +85,7 @@ public class DeviceServiceImpl implements DeviceService {
     private final ChargerMapper chargerMapper;
     private final DeviceLogMapper deviceLogMapper;
     private final AlarmMapper alarmMapper;
+    private final ChargeOrderMapper chargeOrderMapper;
     private final RedisTemplate<String, Object> redisTemplate;
     private final RocketMQTemplate rocketMQTemplate;
     private final ApplicationEventPublisher eventPublisher;
@@ -90,6 +96,13 @@ public class DeviceServiceImpl implements DeviceService {
      */
     @Autowired(required = false)
     private DeviceCommandSender deviceCommandSender;
+
+    /**
+     * 充电事件推送器，由 iot-api 模块通过 WebSocket 实现。
+     * required = false：当 iot-api 未加载时（如单元测试），此依赖为空。
+     */
+    @Autowired(required = false)
+    private ChargeEventPublisher chargeEventPublisher;
 
     // ==================== 设备鉴权 ====================
 
@@ -315,7 +328,12 @@ public class DeviceServiceImpl implements DeviceService {
                         newStatus.getDesc(),
                         data != null ? JSONUtil.toJsonStr(data) : "无"));
 
-        // 7. 发送 MQ 事件
+        // 7. 设备上报 CHARGING 状态 → 对账确认 PENDING_CONFIRM 订单
+        if (status == DeviceStatusEnum.CHARGING.getCode() && charger != null) {
+            reconcilePendingOrders(charger.getId(), sn);
+        }
+
+        // 8. 发送 MQ 事件
         sendDeviceEvent("STATUS_CHANGE", sn,
                 charger != null ? charger.getId() : null,
                 charger != null ? charger.getStationId() : null, data);
@@ -404,9 +422,10 @@ public class DeviceServiceImpl implements DeviceService {
     // ==================== 指令下发 ====================
 
     /**
-     * 向设备下发远程控制指令
+     * 向设备下发远程控制指令（v1 兼容接口，不带响应追踪）
      * <p>
      * 先检查设备是否在线，在线则通过 DeviceCommandSender（MQTT）下发指令。
+     * 内部委托给 v2 接口，自动生成 commandId 以保证链路一致性。
      * </p>
      */
     @Override
@@ -421,8 +440,62 @@ public class DeviceServiceImpl implements DeviceService {
             return false;
         }
 
-        log.info("[指令下发] SN: {}, 指令: {}, 参数: {}", sn, command, params);
-        return deviceCommandSender.sendCommand(sn, command, params);
+        // 委托给 v2 接口，不传业务关联信息
+        String commandId = deviceCommandSender.sendCommand(sn, command, params, null, null);
+        return commandId != null;
+    }
+
+    /**
+     * 向设备下发远程控制指令（v2 带响应追踪和业务关联）
+     * <p>
+     * 先检查设备是否在线，在线则通过 DeviceCommandSender（MQTT）下发指令。
+     * 携带订单号和用户ID用于超时补偿时的订单取消和 WebSocket 通知。
+     * </p>
+     *
+     * @param sn      设备唯一序列号
+     * @param command 指令类型
+     * @param params  指令参数
+     * @param orderNo 关联订单号（可选）
+     * @param userId  操作用户ID（可选）
+     * @return commandId 如果发送成功，null 如果失败
+     */
+    @Override
+    public String sendCommand(String sn, String command, Map<String, Object> params,
+                              String orderNo, Long userId) {
+        if (!isDeviceOnline(sn)) {
+            log.warn("[指令下发] 设备不在线，无法下发指令 - SN: {}", sn);
+            return null;
+        }
+
+        if (deviceCommandSender == null) {
+            log.warn("[指令下发] DeviceCommandSender 未注入（iot-access 模块未加载），指令未发送 - SN: {}, 指令: {}", sn, command);
+            return null;
+        }
+
+        log.info("[指令下发] SN: {}, 指令: {}, commandId生成中..., orderNo: {}", sn, command, orderNo);
+        return deviceCommandSender.sendCommand(sn, command, params, orderNo, userId);
+    }
+
+    /**
+     * 向设备下发指令并同步等待响应（混合模式核心方法）
+     * <p>
+     * 先检查设备是否在线，在线则委托 DeviceCommandSender 发送并等待。
+     * </p>
+     */
+    @Override
+    public CommandResult sendCommandAndWait(String sn, String command, Map<String, Object> params,
+                                            String orderNo, Long userId, long timeoutMs) {
+        if (!isDeviceOnline(sn)) {
+            log.warn("[指令下发-同步] 设备不在线 - SN: {}", sn);
+            return null;
+        }
+
+        if (deviceCommandSender == null) {
+            log.warn("[指令下发-同步] DeviceCommandSender 未注入");
+            return null;
+        }
+
+        return deviceCommandSender.sendCommandAndWait(sn, command, params, orderNo, userId, timeoutMs);
     }
 
     // ==================== 状态机校验 ====================
@@ -431,10 +504,11 @@ public class DeviceServiceImpl implements DeviceService {
      * 验证设备状态转换是否合法
      * <p>
      * 状态机规则：
-     * OFFLINE(0) → IDLE(1)
-     * IDLE(1) → LOCKED(4), FAULT(3), OFFLINE(0)
+     * OFFLINE(0) → IDLE(1), CHARGING(2)   ← 设备断电恢复时可能直接进入 CHARGING（断电前正在充电）
+     * IDLE(1)   → CHARGING(2), LOCKED(4), FAULT(3), OFFLINE(0)
+     *                                        ↑ 扫码启动充电：MQTT START_CHARGE → 设备回 status=2 是最常见路径
      * CHARGING(2) → IDLE(1), FAULT(3), OFFLINE(0)
-     * FAULT(3) → IDLE(1), OFFLINE(0)
+     * FAULT(3)  → IDLE(1), OFFLINE(0)
      * LOCKED(4) → CHARGING(2), IDLE(1), FAULT(3)
      * </p>
      */
@@ -446,11 +520,11 @@ public class DeviceServiceImpl implements DeviceService {
         }
 
         return switch (currentStatus) {
-            case 0 -> targetStatus == 1;  // OFFLINE → IDLE
-            case 1 -> targetStatus == 4 || targetStatus == 3 || targetStatus == 0;  // IDLE → LOCKED/FAULT/OFFLINE
-            case 2 -> targetStatus == 1 || targetStatus == 3 || targetStatus == 0;  // CHARGING → IDLE/FAULT/OFFLINE
-            case 3 -> targetStatus == 1 || targetStatus == 0;  // FAULT → IDLE/OFFLINE
-            case 4 -> targetStatus == 2 || targetStatus == 1 || targetStatus == 3;  // LOCKED → CHARGING/IDLE/FAULT
+            case 0 -> targetStatus == 1 || targetStatus == 2;  // OFFLINE → IDLE / CHARGING
+            case 1 -> targetStatus == 2 || targetStatus == 4 || targetStatus == 3 || targetStatus == 0;  // IDLE → CHARGING / LOCKED / FAULT / OFFLINE
+            case 2 -> targetStatus == 1 || targetStatus == 3 || targetStatus == 0;  // CHARGING → IDLE / FAULT / OFFLINE
+            case 3 -> targetStatus == 1 || targetStatus == 0;  // FAULT → IDLE / OFFLINE
+            case 4 -> targetStatus == 2 || targetStatus == 1 || targetStatus == 3;  // LOCKED → CHARGING / IDLE / FAULT
             default -> false;
         };
     }
@@ -566,6 +640,56 @@ public class DeviceServiceImpl implements DeviceService {
         }
         if (data.containsKey(FIELD_TEMPERATURE) && data.get(FIELD_TEMPERATURE) != null) {
             charger.setTemperature(new BigDecimal(data.get(FIELD_TEMPERATURE).toString()));
+        }
+    }
+
+    /**
+     * 设备状态对账：确认 PENDING_CONFIRM 订单
+     * <p>
+     * 当设备主动上报 CHARGING 状态时，说明设备实际已开始充电。
+     * 查询该充电桩上所有 PENDING_CONFIRM 的订单，自动转为 CHARGING 状态。
+     * 解决指令响应丢失导致的"设备在充电但订单未确认"问题。
+     * </p>
+     *
+     * @param chargerId 充电桩ID
+     * @param sn        设备SN
+     */
+    private void reconcilePendingOrders(Long chargerId, String sn) {
+        try {
+            // 查询该充电桩上状态为 PENDING_CONFIRM 的订单
+            var orders = chargeOrderMapper.selectList(
+                    new LambdaQueryWrapper<ChargeOrder>()
+                            .eq(ChargeOrder::getChargerId, chargerId)
+                            .eq(ChargeOrder::getOrderStatus, OrderStatusEnum.PENDING_CONFIRM.getCode())
+                            .orderByDesc(ChargeOrder::getStartTime)
+            );
+
+            if (orders == null || orders.isEmpty()) {
+                return; // 无待确认订单，无需对账
+            }
+
+            for (ChargeOrder order : orders) {
+                log.info("[状态对账] 设备上报 CHARGING，自动确认订单 - orderNo: {}, chargerId: {}, SN: {}",
+                        order.getOrderNo(), chargerId, sn);
+
+                // 更新订单状态为 CHARGING
+                order.setOrderStatus(OrderStatusEnum.CHARGING.getCode());
+                chargeOrderMapper.updateById(order);
+
+                // WebSocket 推送订单已确认
+                if (chargeEventPublisher != null) {
+                    try {
+                        chargeEventPublisher.publishChargeStart(
+                                order.getUserId(), order.getOrderNo(), order.getChargerId());
+                        chargeEventPublisher.publishCommandStatus(
+                                order.getUserId(), order.getOrderNo(), "SUCCESS", "充电已开始");
+                    } catch (Exception e) {
+                        log.warn("[状态对账] WebSocket 推送失败 - orderNo: {}", order.getOrderNo(), e);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("[状态对账] 对账处理异常 - chargerId: {}, SN: {}", chargerId, sn, e);
         }
     }
 

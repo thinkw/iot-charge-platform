@@ -101,7 +101,7 @@ public class MqttMessage {
     }
 
     /**
-     * 创建 PUBLISH 消息（用于服务端向设备下发指令）
+     * 创建 PUBLISH 消息（用于服务端向设备下发指令，packetId 由 Netty 自动分配）
      *
      * @param topic   目标主题
      * @param payload 消息内容
@@ -113,6 +113,25 @@ public class MqttMessage {
         msg.topic = topic;
         msg.payload = payload;
         msg.qos = qos;
+        return msg;
+    }
+
+    /**
+     * 创建带指定 packetId 的 PUBLISH 消息
+     * <p>
+     * 用于需要精确控制 MQTT 报文标识符的场景（如指令下发），
+     * packetId 可用于后续 PUBACK 匹配和重发追踪。
+     * MQTT 协议规定 packetId 范围为 1-65535，QoS > 0 时才有效。
+     * </p>
+     *
+     * @param topic    目标主题
+     * @param payload  消息内容
+     * @param qos      QoS 等级（必须 > 0，否则 packetId 无效）
+     * @param packetId MQTT 报文标识符（范围 1-65535）
+     */
+    public static MqttMessage publishWithId(String topic, byte[] payload, int qos, int packetId) {
+        MqttMessage msg = publish(topic, payload, qos);
+        msg.packetId = packetId;
         return msg;
     }
 

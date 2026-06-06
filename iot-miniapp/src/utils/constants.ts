@@ -5,7 +5,7 @@ export const DEVICE_STATUS_MAP: Record<number, string> = {
 
 /** 订单状态映射 */
 export const ORDER_STATUS_MAP: Record<number, string> = {
-  1: '充电中', 2: '已完成', 3: '已取消', 4: '异常'
+  1: '充电中', 2: '已完成', 3: '已取消', 4: '异常', 5: '待确认'
 }
 
 /** 支付状态映射 */

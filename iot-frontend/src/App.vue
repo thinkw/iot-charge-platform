@@ -21,8 +21,7 @@ const route = useRoute()
  */
 const layoutMap: Record<string, Component> = {
   auth: defineAsyncComponent(() => import('@/layouts/AuthLayout.vue')),
-  admin: defineAsyncComponent(() => import('@/layouts/AdminLayout.vue')),
-  dashboard: defineAsyncComponent(() => import('@/layouts/DashboardLayout.vue'))
+  admin: defineAsyncComponent(() => import('@/layouts/AdminLayout.vue'))
 }
 
 const layoutComponent = computed(() => {

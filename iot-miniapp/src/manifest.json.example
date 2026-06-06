@@ -1,0 +1,23 @@
+{
+  "name": "iot-charge-miniapp",
+  "appid": "__UNI__XXXXXX",
+  "description": "IoT充电桩智能运营平台 - 用户端",
+  "versionName": "1.0.0",
+  "versionCode": "100",
+  "transformPx": false,
+  "mp-weixin": {
+    "appid": "__WECHAT_APPID__",
+    "setting": {
+      "urlCheck": false,
+      "es6": true,
+      "postcss": true,
+      "minified": true
+    },
+    "usingComponents": true,
+    "permission": {
+      "scope.userLocation": {
+        "desc": "用于获取您的当前位置以推荐附近充电站"
+      }
+    }
+  }
+}

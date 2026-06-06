@@ -5,7 +5,7 @@
  * WebSocket 地址：ws://localhost:8080/ws/charge?userId={userId}
  * </p>
  */
-import { ref, onUnmounted } from 'vue'
+import { ref } from 'vue'
 
 /** WebSocket 推送消息结构 */
 export interface WsMessage {
@@ -145,8 +145,8 @@ export function useWebSocket(userIdOrUrl: number | string = 0) {
     }, 3000)
   }
 
-  // 组件卸载时自动断开
-  onUnmounted(() => disconnect())
+  // 组件卸载时自动断开 — 由调用方在 onUnmounted 中显式调用 disconnect()，
+  // 避免 composable 内部生命周期钩子与调用方重复注册。
 
   return {
     connected,

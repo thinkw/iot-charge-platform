@@ -33,7 +33,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'dashboard',
         name: 'AdminDashboard',
-        component: () => import('@/views/admin/dashboard/AdminDashboardView.vue'),
+        component: () => import('@/views/dashboard/DashboardView.vue'),
         meta: { layout: 'admin', title: '运营数据大屏', roles: ['ROLE_ADMIN'] }
       },
       // --- 充电站管理 ---

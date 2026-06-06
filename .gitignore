@@ -9,5 +9,14 @@
 /iot-frontend/node_modules
 iot-api/src/main/resources/static/
 
+# 本地环境配置（每个端各自保留 .env.example 模板，真实值放 .env / .env.local）
+**/.env
+**/.env.local
+**/.env.*.local
+
+# 微信小程序 manifest.json 不入仓（从 manifest.json.example 模板复制）
+iot-miniapp/src/manifest.json
+
 *.iml
 /.idea/
+/.codebuddy/

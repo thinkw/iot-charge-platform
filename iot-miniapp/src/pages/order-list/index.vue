@@ -1,6 +1,6 @@
 <template>
   <view class="page">
-    <!-- 状态筛选 Tab -->
+    <!-- 状态筛选 Tab（4 Tab 等分 + nowrap，避免窄屏挤压） -->
     <view class="tabs">
       <view v-for="(t, i) in tabs" :key="i" class="tab" :class="{ active: activeTab === t.value }"
         @tap="activeTab = t.value; fetchOrders()">
@@ -38,7 +38,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getOrderList } from '@/api/order'
+import { listOrdersApi } from '@/api/order'
 import { ORDER_STATUS_MAP } from '@/utils/constants'
 
 const orders = ref<any[]>([])
@@ -47,6 +47,7 @@ const activeTab = ref<number | undefined>(undefined)
 const tabs = [
   { label: '全部', value: undefined },
   { label: '充电中', value: 1 },
+  { label: '待确认', value: 5 },
   { label: '已完成', value: 2 }
 ]
 
@@ -57,7 +58,7 @@ async function fetchOrders() {
   try {
     const params: any = { page: 1, size: 50 }
     if (activeTab.value !== undefined && activeTab.value !== null) params.orderStatus = activeTab.value
-    const res: any = await getOrderList(params)
+    const res: any = await listOrdersApi(params)
     orders.value = res.records || []
   } catch {
     // 后端未启动或网络异常，忽略即可
@@ -73,7 +74,11 @@ onMounted(fetchOrders)
 <style scoped>
 .page { padding: 20rpx; }
 .tabs { display:flex; gap:0; margin-bottom:20rpx; background:#fff; border-radius:8rpx; overflow:hidden; }
-.tab { flex:1; text-align:center; padding:20rpx 0; font-size:28rpx; color:#606266; }
+.tab {
+  flex:1; min-width:0;
+  text-align:center; padding:20rpx 4rpx; font-size:26rpx; color:#606266;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
 .tab.active { color:#409EFF; background:#ecf5ff; font-weight:600; }
 .order-card { background:#fff; padding:24rpx; border-radius:12rpx; margin-bottom:16rpx; }
 .card-top { display:flex; justify-content:space-between; margin-bottom:12rpx; }

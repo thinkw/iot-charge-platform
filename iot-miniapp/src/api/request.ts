@@ -63,8 +63,10 @@ function request<T = any>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: strin
 export const http = {
   get<T = any>(path: string, params?: Record<string, any>): Promise<T> {
     const query = params ? '?' + Object.entries(params)
-      .filter(([, v]) => v !== undefined && v !== null && v !== '')
-      .map(([k, v]) => `${k}=${encodeURIComponent(v as string)}`)
+      // 仅过滤 undefined/null；保留 0 / false / 空字符串 等合法业务值
+      // （如 payStatus=0 表示"未支付"，0 是有效查询条件）
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
       .join('&') : ''
     return request('GET', path + query)
   },

@@ -16,6 +16,7 @@ import com.iot.core.mapper.ChargerMapper;
 import com.iot.core.mapper.StationMapper;
 import com.iot.core.mq.producer.ChargeEventProducer;
 import com.iot.core.service.impl.OrderServiceImpl;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,6 +26,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.data.redis.core.HashOperations;
+import org.springframework.data.redis.core.RedisTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -69,8 +72,19 @@ class OrderServiceTest {
     @Mock
     private DeviceService deviceService;
 
+    @Mock
+    private RedisTemplate<String, Object> redisTemplate;
+
+    @Mock
+    private HashOperations<String, Object, Object> hashOperations;
+
     @InjectMocks
     private OrderServiceImpl orderService;
+
+    @BeforeEach
+    void setUp() {
+        lenient().when(redisTemplate.opsForHash()).thenReturn(hashOperations);
+    }
 
     private static final String ORDER_NO = "ORDER-20240601001";
     private static final Long USER_ID = 1L;

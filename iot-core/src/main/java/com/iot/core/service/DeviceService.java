@@ -1,5 +1,7 @@
 package com.iot.core.service;
 
+import com.iot.common.model.CommandResult;
+
 import java.util.Map;
 
 /**
@@ -99,7 +101,7 @@ public interface DeviceService {
     void handleAlarmReport(String sn, String alarmType, int alarmLevel, String content);
 
     /**
-     * 向指定设备下发指令
+     * 向指定设备下发指令（v1 兼容接口，不带响应追踪）
      * <p>
      * 通过 DeviceCommandSender（MQTT）向设备下发远程控制指令。
      * 如果设备不在线则返回失败。
@@ -111,6 +113,43 @@ public interface DeviceService {
      * @return true 指令发送成功，false 发送失败或设备不在线
      */
     boolean sendCommand(String sn, String command, Map<String, Object> params);
+
+    /**
+     * 向指定设备下发指令（v2 带响应追踪和业务关联）
+     * <p>
+     * 生成唯一 commandId 用于指令-响应匹配和幂等去重。
+     * 关联订单号和用户ID，用于超时补偿时的订单取消和 WebSocket 通知。
+     * </p>
+     *
+     * @param sn      设备唯一序列号
+     * @param command 指令类型（START_CHARGE/STOP_CHARGE/RESTART/SET_PARAM）
+     * @param params  指令参数
+     * @param orderNo 关联订单号（可选，非订单关联场景可为 null）
+     * @param userId  操作用户ID（可选，非用户操作场景可为 null）
+     * @return commandId 如果发送成功，null 如果设备不在线或发送失败
+     */
+    String sendCommand(String sn, String command, Map<String, Object> params, String orderNo, Long userId);
+
+    /**
+     * 向指定设备下发指令并同步等待响应（混合模式核心方法）
+     * <p>
+     * 发送指令后阻塞等待设备响应指定时长。
+     * 用于启桩等需要确认设备执行结果的关键场景。
+     * </p>
+     *
+     * @param sn        设备唯一序列号
+     * @param command   指令类型
+     * @param params    指令参数
+     * @param orderNo   关联订单号
+     * @param userId    操作用户ID
+     * @param timeoutMs 同步等待超时（毫秒），建议 3000
+     * @return CommandResult.SUCCESS 设备确认执行成功，
+     *         CommandResult.DEVICE_ERROR 设备拒绝执行，
+     *         CommandResult.TIMEOUT 同步等待超时（异步补偿继续），
+     *         null 设备不在线或发送失败
+     */
+    CommandResult sendCommandAndWait(String sn, String command, Map<String, Object> params,
+                                     String orderNo, Long userId, long timeoutMs);
 
     /**
      * 验证设备状态转换是否合法

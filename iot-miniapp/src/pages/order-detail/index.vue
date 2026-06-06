@@ -8,7 +8,7 @@
         <view class="info-item"><text class="label">充电桩</text><text class="value">{{ order.chargerName || order.chargerId }}</text></view>
         <view class="info-item"><text class="label">充电站</text><text class="value">{{ order.stationName || order.stationId }}</text></view>
         <view class="info-item"><text class="label">开始时间</text><text class="value">{{ order.startTime }}</text></view>
-        <view class="info-item"><text class="label">结束时间</text><text class="value">{{ order.endTime || '充电中' }}</text></view>
+        <view class="info-item"><text class="label">结束时间</text><text class="value">{{ order.endTime || (order.orderStatus === 5 ? '待确认' : '充电中') }}</text></view>
         <view class="info-item"><text class="label">充电量</text><text class="value">{{ order.chargedEnergy }} kWh</text></view>
         <view class="info-item"><text class="label">金额</text><text class="value amount">¥{{ order.totalAmount }}</text></view>
         <view class="info-item"><text class="label">订单状态</text><text class="value">{{ orderStatusText(order.orderStatus) }}</text></view>
@@ -19,6 +19,10 @@
       <!-- 充电中：进入充电监控 -->
       <view class="actions" v-if="order.orderStatus === 1">
         <button class="monitor-btn" @tap="goMonitor">⚡ 进入充电监控</button>
+      </view>
+      <!-- 待确认：显示等待提示（无操作按钮，避免前后端状态不一致） -->
+      <view class="actions" v-if="order.orderStatus === 5">
+        <view class="pending-hint">⏳ 设备正在响应中，请稍候...</view>
       </view>
       <view class="actions" v-if="order.orderStatus === 2 && order.payStatus === 0">
         <button class="pay-btn" @tap="handlePay">去支付</button>
@@ -33,7 +37,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getOrderDetailByNo, payOrder, refundOrder } from '@/api/order'
+import { getOrderApi, payOrder, refundOrder } from '@/api/order'
 import { ORDER_STATUS_MAP, PAY_STATUS_MAP } from '@/utils/constants'
 
 const order = ref<any>(null)
@@ -51,7 +55,7 @@ function payStatusText(s: number) { return PAY_STATUS_MAP[s] || '未知' }
 async function fetchOrder() {
   if (!orderNoStr) return
   loading.value = true
-  try { order.value = await getOrderDetailByNo(orderNoStr) } catch { /* 订单不存在时忽略 */ } finally { loading.value = false }
+  try { order.value = await getOrderApi(orderNoStr) } catch { /* 订单不存在时忽略 */ } finally { loading.value = false }
 }
 
 function goMonitor() {
@@ -92,6 +96,7 @@ async function handleRefund() {
 .label { font-size:26rpx; color:#909399; }
 .value { font-size:28rpx; color:#303133; text-align:right; max-width:60%; }
 .amount { color:#F56C6C; font-weight:600; }
+.pending-hint { width:100%; padding:32rpx 0; text-align:center; font-size:28rpx; color:#E6A23C; background:#fdf6ec; border-radius:12rpx; }
 .actions { margin-top:40rpx; }
 .pay-btn { width:100%; height:96rpx; background:#409EFF; color:#fff; border:none; border-radius:12rpx; font-size:32rpx; }
 .monitor-btn { width:100%; height:96rpx; background:linear-gradient(135deg,#409EFF,#67C23A); color:#fff; border:none; border-radius:12rpx; font-size:32rpx; }

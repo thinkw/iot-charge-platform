@@ -131,7 +131,7 @@ async function fetchList() {
   try {
     const params: Record<string, any> = { page: query.page, size: query.size }
     if (query.name) params.name = query.name
-    if (query.status !== undefined && query.status !== null && query.status !== '') params.status = query.status
+    if (query.status !== undefined && query.status !== null) params.status = query.status
     const res: any = await getStationList(params)
     list.value = res.records || []
     total.value = res.total || 0

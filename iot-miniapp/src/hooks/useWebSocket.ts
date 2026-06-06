@@ -1,4 +1,4 @@
-import { ref, onUnmounted } from 'vue'
+import { ref } from 'vue'
 import { WS_BASE_URL } from '@/utils/constants'
 
 export interface WsMessage {
@@ -89,7 +89,13 @@ export function useWebSocket(path: string) {
     }
   }
 
-  onUnmounted(() => disconnect())
+  /**
+   * 注意：不在 hook 内注册 onUnmounted(disconnect)。
+   * 原因：hook 在 setup 阶段执行时注册 onUnmounted 生命周期，
+   * 若调用方（如 charge-monitor）也手动管理 disconnect 会出现双重注册。
+   * 改由调用方在合适时机显式调用 disconnect() 即可。
+   * 典型场景：onUnmounted(() => disconnect()) / handleStop() 中 disconnect()。
+   */
 
   return { connected, lastMessage, connect, disconnect, onMessage, send }
 }

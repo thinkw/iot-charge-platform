@@ -63,3 +63,11 @@ mqtt:
     slow-client:
       max-non-writable-seconds: 30 # 持续不可写超时阈值（秒），超时主动断连
       check-interval-cron: "*/10 * * * * *" # 检查间隔（cron 表达式）
+
+  # 指令下发可靠性配置
+  command:
+    sync-timeout-ms: 3000      # 同步等待超时（毫秒），混合模式中 HTTP 线程最大阻塞时间
+    total-timeout-ms: 10000    # 总超时时间（毫秒），超时未响应则取消订单
+    max-retries: 2             # 最大重试次数（不含首次发送）
+    retry-interval-ms: 2000    # 重试间隔（毫秒）
+    scan-interval-ms: 5000     # 定时扫描间隔（毫秒）

@@ -45,7 +45,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {
 
-    /** Redis 设备状态 Key 前缀，与 ChargeServiceImpl 保持一致 */
+    /**
+     * Redis 设备状态 Key 前缀，与 ChargeServiceImpl 保持一致
+     */
     private static final String REDIS_KEY_DEVICE_STATUS = "device:status:";
 
     private final ChargeOrderMapper chargeOrderMapper;
@@ -65,7 +67,7 @@ public class OrderServiceImpl implements OrderService {
      */
     @Override
     public PageResult<OrderVO> listOrders(Long userId, int page, int size,
-                                           Integer orderStatus, LocalDateTime startTime, LocalDateTime endTime) {
+                                          Integer orderStatus, LocalDateTime startTime, LocalDateTime endTime) {
         // 构建查询条件
         LambdaQueryWrapper<ChargeOrder> queryWrapper = new LambdaQueryWrapper<ChargeOrder>()
                 .eq(ChargeOrder::getUserId, userId)
@@ -237,9 +239,9 @@ public class OrderServiceImpl implements OrderService {
      */
     @Override
     public PageResult<OrderVO> listAllOrders(Long userId, Long chargerId, Long stationId,
-                                               Integer orderStatus, Integer payStatus,
-                                               LocalDateTime startTime, LocalDateTime endTime,
-                                               int page, int size) {
+                                             Integer orderStatus, Integer payStatus,
+                                             LocalDateTime startTime, LocalDateTime endTime,
+                                             int page, int size) {
         // 构建多条件查询
         LambdaQueryWrapper<ChargeOrder> queryWrapper = new LambdaQueryWrapper<ChargeOrder>()
                 .orderByDesc(ChargeOrder::getCreateTime);
@@ -275,10 +277,10 @@ public class OrderServiceImpl implements OrderService {
 
         // 批量查询关联名称
         Map<Long, Charger> chargerMap = chargerMapper.selectBatchIds(
-                orders.stream().map(ChargeOrder::getChargerId).distinct().toList())
+                        orders.stream().map(ChargeOrder::getChargerId).distinct().toList())
                 .stream().collect(Collectors.toMap(Charger::getId, c -> c, (a, b) -> a));
         Map<Long, Station> stationMap = stationMapper.selectBatchIds(
-                orders.stream().map(ChargeOrder::getStationId).distinct().toList())
+                        orders.stream().map(ChargeOrder::getStationId).distinct().toList())
                 .stream().collect(Collectors.toMap(Station::getId, s -> s, (a, b) -> a));
 
         List<OrderVO> voList = orders.stream().map(order -> {
@@ -308,7 +310,8 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(404, "订单不存在");
         }
         if (order.getOrderStatus() != OrderStatusEnum.CHARGING.getCode()
-                && order.getOrderStatus() != OrderStatusEnum.ABNORMAL.getCode()) {
+                && order.getOrderStatus() != OrderStatusEnum.ABNORMAL.getCode()
+                && order.getOrderStatus() != OrderStatusEnum.PENDING_CONFIRM.getCode()) {
             throw new BusinessException(409, "订单状态不允许手动结束，当前状态: "
                     + OrderStatusEnum.fromCode(order.getOrderStatus()).getDesc());
         }

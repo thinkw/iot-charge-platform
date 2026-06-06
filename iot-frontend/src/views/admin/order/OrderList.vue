@@ -8,6 +8,7 @@
           <el-select v-model="query.orderStatus" placeholder="全部" clearable style="width:120px">
             <el-option label="充电中" :value="1" /><el-option label="已完成" :value="2" />
             <el-option label="已取消" :value="3" /><el-option label="异常" :value="4" />
+            <el-option label="待确认" :value="5" />
           </el-select>
         </el-form-item>
         <el-form-item label="支付状态">
@@ -36,7 +37,7 @@
         <el-table-column label="开始时间" width="160"><template #default="{ row }">{{ row.startTime }}</template></el-table-column>
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="row.orderStatus === 1 || row.orderStatus === 4" size="small" type="warning" @click="openForceEnd(row)">
+            <el-button v-if="row.orderStatus === 1 || row.orderStatus === 4 || row.orderStatus === 5" size="small" type="warning" @click="openForceEnd(row)">
               强制结束
             </el-button>
             <el-button v-if="row.payStatus === 1" size="small" type="danger" @click="openRefund(row)">退款</el-button>
@@ -78,7 +79,7 @@ const query = reactive<any>({ page: 1, size: 20, userId: '', chargerId: '', orde
 const endVisible = ref(false); const endReason = ref(''); const endOrderNo = ref('')
 const refundVisible = ref(false); const refundReason = ref(''); const refundOrderNo = ref('')
 
-function orderStatusText(s: number) { const m: Record<number, string> = { 1: '充电中', 2: '已完成', 3: '已取消', 4: '异常' }; return m[s] || '未知' }
+function orderStatusText(s: number) { const m: Record<number, string> = { 1: '充电中', 2: '已完成', 3: '已取消', 4: '异常', 5: '待确认' }; return m[s] || '未知' }
 function payStatusText(s: number) { const m: Record<number, string> = { 0: '未支付', 1: '已支付', 2: '已退款' }; return m[s] || '未知' }
 
 async function fetchList() {

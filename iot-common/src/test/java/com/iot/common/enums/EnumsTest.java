@@ -71,7 +71,8 @@ class EnumsTest {
                 "1, CHARGING, 充电中",
                 "2, COMPLETED, 已完成",
                 "3, CANCELLED, 已取消",
-                "4, ABNORMAL, 异常"
+                "4, ABNORMAL, 异常",
+                "5, PENDING_CONFIRM, 待确认"
         })
         @DisplayName("fromCode 应根据状态码返回正确的枚举")
         void shouldReturnCorrectEnum(int code, String expectedName, String expectedDesc) {
@@ -88,9 +89,9 @@ class EnumsTest {
         }
 
         @Test
-        @DisplayName("values() 应包含 5 个状态")
-        void shouldHaveFiveValues() {
-            assertEquals(5, OrderStatusEnum.values().length);
+        @DisplayName("values() 应包含 6 个状态")
+        void shouldHaveSixValues() {
+            assertEquals(6, OrderStatusEnum.values().length);
         }
     }
 

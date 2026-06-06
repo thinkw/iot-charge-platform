@@ -47,7 +47,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getStationList } from '@/api/station'
+import { listStationsApi } from '@/api/station'
 import { useLocation } from '@/hooks/useLocation'
 
 const stations = ref<any[]>([])
@@ -72,7 +72,7 @@ async function fetchStations() {
         params.longitude = loc.longitude
       } catch { /* 用户拒绝定位，回退综合排序 */ }
     }
-    const res: any = await getStationList(params)
+    const res: any = await listStationsApi(params)
     stations.value = res.records || []
   } catch {
     // 后端未启动或网络异常，忽略即可

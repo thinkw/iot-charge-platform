@@ -32,7 +32,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getStationDetail } from '@/api/station'
+import { getStationApi } from '@/api/station'
 import { DEVICE_STATUS_MAP } from '@/utils/constants'
 
 const station = ref<any>(null)
@@ -47,7 +47,7 @@ function goCharger(id: number) { uni.navigateTo({ url: `/pages/charger-detail/in
 
 onMounted(async () => {
   loading.value = true
-  try { station.value = await getStationDetail(stationId) } catch { /* 后端不可用时忽略 */ } finally { loading.value = false }
+  try { station.value = await getStationApi(stationId) } catch { /* 后端不可用时忽略 */ } finally { loading.value = false }
 })
 </script>
 

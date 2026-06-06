@@ -93,7 +93,7 @@ async function openDialog(row?: any) {
 }
 
 async function loadPermissionTree() {
-  try { permissionTree.value = await api.getPermissionTree() } catch { permissionTree.value = [] }
+  try { permissionTree.value = (await api.getPermissionTree()) as unknown as any[] } catch { permissionTree.value = [] }
 }
 
 async function handleSubmit() {
