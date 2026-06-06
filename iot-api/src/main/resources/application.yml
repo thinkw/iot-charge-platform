@@ -40,3 +40,18 @@ rocketmq:
 jwt:
   secret: iot-charge-platform-secret-keyiot-charge-platform-secret-key
   expiration: 86400000
+
+# MQTT Server 配置
+mqtt:
+  server:
+    port: 1883 # MQTT 监听端口
+    boss-thread-count: 2 # Boss 线程数（接收连接）
+    worker-thread-count: 8 # Worker 线程数（处理 I/O）
+    idle-read-timeout-seconds: 90 # 读空闲超时（秒）
+    so-backlog: 1024 # 连接等待队列长度
+    max-connections: 2 # 最大连接数
+    # 直接内存保护
+    memory-protect:
+      high-watermark: 0.9 # 暂停 autoRead 阈值
+      low-watermark: 0.6 # 恢复 autoRead 阈值
+      check-interval-cron: "*/10 * * * * *" # 检查间隔（cron 表达式）

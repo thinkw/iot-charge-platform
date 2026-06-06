@@ -14,6 +14,7 @@ import org.eclipse.paho.client.mqttv3.MqttMessage;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -78,8 +79,14 @@ public class VirtualCharger {
     private ScheduledFuture<?> heartbeatFuture;
     /** 数据上报定时任务句柄 */
     private ScheduledFuture<?> dataReportFuture;
+    /** 重连专用调度器（单线程，生命周期与设备一致） */
+    private ScheduledExecutorService reconnectScheduler;
+    /** 重试计数器（连接成功后归零） */
+    private AtomicInteger retryCount;
 
     // ==================== 常量 ====================
+    /** 最大重试间隔（秒） */
+    private static final long MAX_BACKOFF_SECONDS = 60;
     private static final String TOPIC_HEARTBEAT = "device/heartbeat";
     private static final String TOPIC_STATUS = "device/status";
     private static final String TOPIC_DATA = "device/data";
@@ -89,26 +96,110 @@ public class VirtualCharger {
     /**
      * 初始化并启动虚拟充电桩
      * <p>
-     * 1. 创建 MQTT 客户端并连接
-     * 2. 上报设备上线状态
-     * 3. 启动心跳定时任务
+     * 首次连接立即发起，连接成功后启动心跳/数据上报；
+     * 连接失败则按指数退避策略无限重试，直到主动调用 stop()。
      * </p>
      */
     public void start() {
+        this.running = true;
+        this.retryCount = new AtomicInteger(0);
+        this.reconnectScheduler = Executors.newSingleThreadScheduledExecutor(
+                Thread.ofVirtual().name("reconnect-" + sn).factory()
+        );
+        // 首次连接立即发起，后续由 attemptConnection 内部调度重试
+        reconnectScheduler.execute(this::attemptConnection);
+    }
+
+    /**
+     * 连接尝试（含退避重试）
+     * <p>
+     * 始终在 reconnectScheduler 单线程内执行，天然串行，无需额外同步。
+     * 成功后调用 onConnected 启动心跳/数据上报；失败则按指数退避调度下一次重试。
+     * </p>
+     */
+    private void attemptConnection() {
+        if (!running) return;
         try {
-            connectMqtt();
-            this.running = true;
-            this.scheduler = new ScheduledThreadPoolExecutor(2, Thread.ofVirtual().name("charger-" + sn + "-", 0).factory());
-
-            // 上报初始状态（空闲）
-            reportStatus(DeviceStatusEnum.IDLE);
-            log.info("[{}] 虚拟充电桩启动完成，状态: {}", sn, status != null ? status.getDesc() : "空闲");
-
-            // 启动心跳定时任务
-            heartbeatFuture = scheduler.scheduleAtFixedRate(
-                    this::sendHeartbeat, 0, heartbeatInterval, TimeUnit.SECONDS);
+            closeMqttClient();       // 清理上一次失败的客户端
+            connectMqtt();           // 阻塞直到连接成功或超时
+            onConnected();           // 启动心跳/数据上报
         } catch (Exception e) {
-            log.error("[{}] 虚拟充电桩启动失败", sn, e);
+            if (!running) return;
+            int count = retryCount.getAndIncrement();
+            long delay = calculateBackoff(count);
+            log.warn("[{}] 连接失败，{}秒后进行第{}次重试: {}",
+                    sn, delay, count + 1, e.getMessage());
+            reconnectScheduler.schedule(this::attemptConnection, delay, TimeUnit.SECONDS);
+        }
+    }
+
+    /**
+     * 指数退避：2s → 4s → 8s → 16s → 32s → 60s → 60s ...
+     */
+    private long calculateBackoff(int retryCount) {
+        long delay = (long) Math.pow(2, retryCount + 1); // 2^1=2, 2^2=4, 2^3=8, ...
+        return Math.min(delay, MAX_BACKOFF_SECONDS);
+    }
+
+    /**
+     * 连接成功后初始化业务调度器
+     */
+    private void onConnected() {
+        retryCount.set(0);  // 重试计数归零
+        this.scheduler = new ScheduledThreadPoolExecutor(2,
+                Thread.ofVirtual().name("charger-" + sn + "-", 0).factory());
+        reportStatus(DeviceStatusEnum.IDLE);
+        log.info("[{}] 虚拟充电桩上线成功，状态: {}", sn,
+                status != null ? status.getDesc() : "空闲");
+        heartbeatFuture = scheduler.scheduleAtFixedRate(
+                this::sendHeartbeat, heartbeatInterval, heartbeatInterval, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 连接断开后的清理与重连触发
+     * <p>
+     * 由 ChargeCommandCallback.connectionLost 调用（Paho 回调线程），
+     * 清理旧调度器后，将重连任务提交到 reconnectScheduler。
+     * </p>
+     */
+    public void onDisconnected() {
+        if (!running) return;
+        // 清理心跳/数据上报定时任务
+        if (heartbeatFuture != null) {
+            heartbeatFuture.cancel(true);
+            heartbeatFuture = null;
+        }
+        if (dataReportFuture != null) {
+            dataReportFuture.cancel(true);
+            dataReportFuture = null;
+        }
+        if (scheduler != null && !scheduler.isShutdown()) {
+            scheduler.shutdownNow();
+            scheduler = null;
+        }
+        // 清理旧 MQTT 客户端
+        closeMqttClient();
+        // 触发重连（提交到重连调度器线程）
+        if (reconnectScheduler != null && !reconnectScheduler.isShutdown()) {
+            retryCount.set(0);
+            reconnectScheduler.execute(this::attemptConnection);
+        }
+    }
+
+    /**
+     * 安全关闭 MQTT 客户端
+     */
+    private void closeMqttClient() {
+        if (mqttClient != null) {
+            try {
+                if (mqttClient.isConnected()) {
+                    mqttClient.disconnect();
+                }
+                mqttClient.close();
+            } catch (MqttException ignored) {
+                // 关闭旧客户端忽略异常
+            }
+            mqttClient = null;
         }
     }
 
@@ -117,10 +208,23 @@ public class VirtualCharger {
      */
     public void stop() {
         this.running = false;
-        if (heartbeatFuture != null) heartbeatFuture.cancel(true);
-        if (dataReportFuture != null) dataReportFuture.cancel(true);
-        if (scheduler != null) scheduler.shutdownNow();
-        disconnectMqtt();
+        if (heartbeatFuture != null) {
+            heartbeatFuture.cancel(true);
+            heartbeatFuture = null;
+        }
+        if (dataReportFuture != null) {
+            dataReportFuture.cancel(true);
+            dataReportFuture = null;
+        }
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+            scheduler = null;
+        }
+        if (reconnectScheduler != null) {
+            reconnectScheduler.shutdownNow();
+            reconnectScheduler = null;
+        }
+        closeMqttClient();
         log.info("[{}] 虚拟充电桩已停止", sn);
     }
 
@@ -142,7 +246,7 @@ public class VirtualCharger {
         // 禁用 Paho MQTT 协议层 PINGREQ 以避免与应用层心跳冲突导致误断连
         options.setKeepAliveInterval(0);
         options.setConnectionTimeout(30);
-        options.setAutomaticReconnect(true);  // 自动重连
+        options.setAutomaticReconnect(false); // 由业务层统一管理重连策略
 
         // 设置回调处理指令
         mqttClient.setCallback(new ChargeCommandCallback(this));
@@ -159,20 +263,6 @@ public class VirtualCharger {
         mqttClient.subscribe(commandTopic, 1);
 
         log.info("[{}] MQTT 连接成功，已订阅: {}", sn, commandTopic);
-    }
-
-    /**
-     * 断开 MQTT 连接
-     */
-    private void disconnectMqtt() {
-        if (mqttClient != null && mqttClient.isConnected()) {
-            try {
-                mqttClient.disconnect();
-                mqttClient.close();
-            } catch (MqttException e) {
-                log.warn("[{}] MQTT 断开异常: {}", sn, e.getMessage());
-            }
-        }
     }
 
     // ==================== 模拟行为 ====================

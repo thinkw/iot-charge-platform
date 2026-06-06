@@ -4,9 +4,11 @@ import com.iot.access.mqtt.codec.MqttMessage;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
+import io.netty.channel.ChannelId;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -139,5 +141,24 @@ public class MqttSessionManager {
         });
         sessionMap.clear();
         log.info("[会话管理] 所有会话已关闭");
+    }
+
+    /**
+     * 根据 ChannelId 查找 Channel（遍历 sessionMap，O(n)）
+     *
+     * @param channelId Netty ChannelId
+     * @return Channel，如果未找到返回 null
+     */
+    public Channel getChannelById(ChannelId channelId) {
+        for (Channel ch : sessionMap.values()) {
+            if (ch.id().equals(channelId)) {
+                return ch;
+            }
+        }
+        return null;
+    }
+
+    public Collection<Channel> getAllChannels(){
+        return sessionMap.values();
     }
 }

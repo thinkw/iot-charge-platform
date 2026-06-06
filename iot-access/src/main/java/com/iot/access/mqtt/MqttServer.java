@@ -2,6 +2,7 @@ package com.iot.access.mqtt;
 
 import com.iot.access.mqtt.codec.MqttDecoder;
 import com.iot.access.mqtt.codec.MqttEncoder;
+import com.iot.access.mqtt.handler.MaxConnectLimitHandler;
 import com.iot.access.mqtt.handler.MqttMessageHandler;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.ChannelFuture;
@@ -48,7 +49,14 @@ public class MqttServer {
     @Value("${mqtt.server.worker-thread-count:8}")
     private int workerThreadCount;
 
+    @Value("${mqtt.server.idle-read-timeout-seconds:90}")
+    private int idleReadTimeoutSeconds;
+
+    @Value("${mqtt.server.so-backlog:1024}")
+    private int soBacklog;
+
     private final MqttMessageHandler mqttMessageHandler;
+    private final MaxConnectLimitHandler maxConnectLimitHandler;
 
     /** Boss 线程组，负责接收连接 */
     private EventLoopGroup bossGroup;
@@ -73,7 +81,7 @@ public class MqttServer {
             ServerBootstrap bootstrap = new ServerBootstrap();
             bootstrap.group(bossGroup, workerGroup)
                     .channel(NioServerSocketChannel.class)
-                    .option(ChannelOption.SO_BACKLOG, 1024)    // 连接等待队列
+                    .option(ChannelOption.SO_BACKLOG, soBacklog)    // 连接等待队列
                     .childOption(ChannelOption.SO_KEEPALIVE, true)  // TCP KeepAlive
                     .childOption(ChannelOption.TCP_NODELAY, true)   // 禁用 Nagle 算法
                     .childHandler(new ChannelInitializer<SocketChannel>() {
@@ -81,9 +89,10 @@ public class MqttServer {
                         protected void initChannel(SocketChannel ch) {
                             ChannelPipeline pipeline = ch.pipeline();
 
-                            // 1. 空闲检测：90秒读空闲触发 IdleState.READER_IDLE 事件
+                            pipeline.addLast("limitConn", maxConnectLimitHandler);
+                            // 1. 空闲检测：配置化的读空闲超时
                             pipeline.addLast("idleHandler",
-                                    new IdleStateHandler(90, 0, 0, TimeUnit.SECONDS));
+                                    new IdleStateHandler(idleReadTimeoutSeconds, 0, 0, TimeUnit.SECONDS));
 
                             // 2. MQTT 协议编解码
                             pipeline.addLast("mqttDecoder", new MqttDecoder());

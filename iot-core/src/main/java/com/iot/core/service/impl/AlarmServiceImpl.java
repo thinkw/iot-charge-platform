@@ -55,7 +55,6 @@ public class AlarmServiceImpl implements AlarmService {
                                          LocalDateTime startTime, LocalDateTime endTime,
                                          int page, int size) {
         LambdaQueryWrapper<Alarm> wrapper = new LambdaQueryWrapper<>();
-
         if (chargerId != null) {
             wrapper.eq(Alarm::getChargerId, chargerId);
         }

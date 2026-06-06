@@ -28,7 +28,9 @@ public class ChargeCommandCallback implements MqttCallback {
 
     @Override
     public void connectionLost(Throwable cause) {
-        log.warn("[{}] MQTT 连接断开: {}", charger.getSn(), cause.getMessage());
+        log.warn("[{}] MQTT 连接断开: {}", charger.getSn(),
+                cause != null ? cause.getMessage() : "未知原因");
+        charger.onDisconnected();
     }
 
     @Override
