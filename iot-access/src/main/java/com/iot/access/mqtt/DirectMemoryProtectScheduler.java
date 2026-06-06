@@ -9,7 +9,6 @@ import org.springframework.stereotype.Component;
 
 import java.lang.management.BufferPoolMXBean;
 import java.lang.management.ManagementFactory;
-import java.lang.reflect.Method;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -47,48 +46,16 @@ public class DirectMemoryProtectScheduler {
      * 获取 JVM 允许的最大直接内存。
      * 优先级：
      * 1. 配置显式指定 mqtt.server.memory-protect.max-direct-memory（单位 bytes，>0 生效）
-     * 2. JDK 9+: 反射 jdk.internal.misc.VM.maxDirectMemory()
-     * 3. JDK 8:  反射 sun.misc.VM.maxDirectMemory()
-     * 4. 降级: Runtime.getRuntime().maxMemory()（默认 MaxDirectMemorySize = -Xmx）
+     * 2. 默认: Runtime.getRuntime().maxMemory()（HotSpot 默认 MaxDirectMemorySize = -Xmx）
      */
     private static long resolveMaxDirectMemory(long configMaxDirectMemory) {
-        // 1. 配置显式指定
         if (configMaxDirectMemory > 0) {
             log.info("[内存保护] 使用配置指定的 maxDirectMemory: {} MB", configMaxDirectMemory / 1024 / 1024);
             return configMaxDirectMemory;
         }
-
-        // 2. JDK 9+: jdk.internal.misc.VM
-        Long max = reflectMaxDirectMemory("jdk.internal.misc.VM");
-        if (max != null) return max;
-
-        // 3. JDK 8: sun.misc.VM
-        max = reflectMaxDirectMemory("sun.misc.VM");
-        if (max != null) return max;
-
-        // 4. 降级
         long fallback = Runtime.getRuntime().maxMemory();
-        log.info("[内存保护] 反射获取 MaxDirectMemorySize 失败（非 JDK 8/9+ 环境），使用 -Xmx 降级: {} MB",
-                fallback / 1024 / 1024);
+        log.info("[内存保护] 使用 -Xmx 作为 MaxDirectMemorySize: {} MB", fallback / 1024 / 1024);
         return fallback;
-    }
-
-    private static Long reflectMaxDirectMemory(String className) {
-        try {
-            Class<?> vmClass = Class.forName(className);
-            Method method = vmClass.getDeclaredMethod("maxDirectMemory");
-            method.setAccessible(true);
-            long max = (long) method.invoke(null);
-            if (max > 0) {
-                log.info("[内存保护] 通过 {} 获取 MaxDirectMemorySize: {} MB", className, max / 1024 / 1024);
-                return max;
-            }
-        } catch (ClassNotFoundException ignored) {
-            // 当前 JDK 版本无此类，符合预期
-        } catch (Exception e) {
-            log.debug("[内存保护] 通过 {} 获取 MaxDirectMemorySize 失败: {}", className, e.toString());
-        }
-        return null;
     }
 
     @Scheduled(cron = "${mqtt.server.memory-protect.check-interval-cron:*/10 * * * * *}")

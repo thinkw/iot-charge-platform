@@ -49,9 +49,17 @@ mqtt:
     worker-thread-count: 8 # Worker 线程数（处理 I/O）
     idle-read-timeout-seconds: 90 # 读空闲超时（秒）
     so-backlog: 1024 # 连接等待队列长度
-    max-connections: 2 # 最大连接数
+    max-connections: 100 # 最大连接数
+    # 出站缓冲区水位控制
+    write-buffer:
+      low-watermark-bytes: 32768 # 出站低水位 32KB，低于此值恢复可写
+      high-watermark-bytes: 65536 # 出站高水位 64KB，超过此值暂停写入
     # 直接内存保护
     memory-protect:
       high-watermark: 0.9 # 暂停 autoRead 阈值
       low-watermark: 0.6 # 恢复 autoRead 阈值
+      check-interval-cron: "*/10 * * * * *" # 检查间隔（cron 表达式）
+    # 慢客户端保护
+    slow-client:
+      max-non-writable-seconds: 30 # 持续不可写超时阈值（秒），超时主动断连
       check-interval-cron: "*/10 * * * * *" # 检查间隔（cron 表达式）

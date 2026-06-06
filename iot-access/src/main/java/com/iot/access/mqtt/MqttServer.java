@@ -10,6 +10,7 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
+import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
@@ -55,6 +56,12 @@ public class MqttServer {
     @Value("${mqtt.server.so-backlog:1024}")
     private int soBacklog;
 
+    @Value("${mqtt.server.write-buffer.low-watermark-bytes:32768}")
+    private int writeBufferLowWaterMark;
+
+    @Value("${mqtt.server.write-buffer.high-watermark-bytes:65536}")
+    private int writeBufferHighWaterMark;
+
     private final MqttMessageHandler mqttMessageHandler;
     private final MaxConnectLimitHandler maxConnectLimitHandler;
 
@@ -84,6 +91,8 @@ public class MqttServer {
                     .option(ChannelOption.SO_BACKLOG, soBacklog)    // 连接等待队列
                     .childOption(ChannelOption.SO_KEEPALIVE, true)  // TCP KeepAlive
                     .childOption(ChannelOption.TCP_NODELAY, true)   // 禁用 Nagle 算法
+                    .childOption(ChannelOption.WRITE_BUFFER_WATER_MARK,
+                            new WriteBufferWaterMark(writeBufferLowWaterMark, writeBufferHighWaterMark))  // 出站缓冲区高低水位
                     .childHandler(new ChannelInitializer<SocketChannel>() {
                         @Override
                         protected void initChannel(SocketChannel ch) {
@@ -104,6 +113,7 @@ public class MqttServer {
                     });
 
             channelFuture = bootstrap.bind(port).sync();
+            log.info("[验证] WriteBufferWaterMark: low={}, high={}", writeBufferLowWaterMark, writeBufferHighWaterMark);
             log.info("================================");
             log.info("MQTT Server 启动成功，监听端口: {}", port);
             log.info("Boss线程数: {}, Worker线程数: {}", bossThreadCount, workerThreadCount);

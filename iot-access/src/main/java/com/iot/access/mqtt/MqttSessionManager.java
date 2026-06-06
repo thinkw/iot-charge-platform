@@ -103,6 +103,12 @@ public class MqttSessionManager {
             return false;
         }
 
+        // 出站缓冲区已满（慢客户端），拒绝写入，避免服务端 OOM
+        if (!channel.isWritable()) {
+            log.warn("[会话管理] 设备出站缓冲区已满（慢客户端），拒绝发送消息 - clientId: {}", clientId);
+            return false;
+        }
+
         ChannelFuture future = channel.writeAndFlush(message);
         future.addListener((ChannelFutureListener) f -> {
             if (!f.isSuccess()) {
