@@ -50,6 +50,22 @@ public interface ChargeEventPublisher {
     void publishChargeStop(Long userId, String orderNo, java.math.BigDecimal totalAmount);
 
     /**
+     * 推送充电结束通知（带原因）
+     * <p>
+     * 默认实现：未识别 reason 时复用 {@link #publishChargeStop}，前端通过消息体
+     * 中的 reason 字段（NORMAL / ABNORMAL）区分正常结束与异常终止。
+     * </p>
+     *
+     * @param userId      用户ID
+     * @param orderNo     订单编号
+     * @param totalAmount 总金额(元)
+     * @param reason      NORMAL=用户主动结束 / ABNORMAL=异常自动终止（服务费折扣）
+     */
+    default void publishChargeStop(Long userId, String orderNo, java.math.BigDecimal totalAmount, String reason) {
+        publishChargeStop(userId, orderNo, totalAmount);
+    }
+
+    /**
      * 推送指令执行状态通知
      * <p>
      * 用于混合模式启桩流程中告知用户指令执行进度。

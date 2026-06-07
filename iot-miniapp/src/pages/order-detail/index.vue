@@ -8,7 +8,7 @@
         <view class="info-item"><text class="label">充电桩</text><text class="value">{{ order.chargerName || order.chargerId }}</text></view>
         <view class="info-item"><text class="label">充电站</text><text class="value">{{ order.stationName || order.stationId }}</text></view>
         <view class="info-item"><text class="label">开始时间</text><text class="value">{{ order.startTime }}</text></view>
-        <view class="info-item"><text class="label">结束时间</text><text class="value">{{ order.endTime || (order.orderStatus === 5 ? '待确认' : '充电中') }}</text></view>
+        <view class="info-item"><text class="label">结束时间</text><text class="value">{{ order.endTime || (order.orderStatus === 6 ? '等待设备确认' : '充电中') }}</text></view>
         <view class="info-item"><text class="label">充电量</text><text class="value">{{ order.chargedEnergy }} kWh</text></view>
         <view class="info-item"><text class="label">金额</text><text class="value amount">¥{{ order.totalAmount }}</text></view>
         <view class="info-item"><text class="label">订单状态</text><text class="value">{{ orderStatusText(order.orderStatus) }}</text></view>
@@ -20,8 +20,12 @@
       <view class="actions" v-if="order.orderStatus === 1">
         <button class="monitor-btn" @tap="goMonitor">⚡ 进入充电监控</button>
       </view>
-      <!-- 待确认：显示等待提示（无操作按钮，避免前后端状态不一致） -->
+      <!-- 待支付：充电已结束，账单已生成 -->
       <view class="actions" v-if="order.orderStatus === 5">
+        <button class="pay-btn" @tap="handlePay">去支付</button>
+      </view>
+      <!-- 等待设备：启桩指令已下发，设备正在响应 -->
+      <view class="actions" v-if="order.orderStatus === 6">
         <view class="pending-hint">⏳ 设备正在响应中，请稍候...</view>
       </view>
       <view class="actions" v-if="order.orderStatus === 2 && order.payStatus === 0">
@@ -35,19 +39,35 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { ref, onUnmounted } from 'vue'
+import { onLoad, onShow, onHide } from '@dcloudio/uni-app'
 import { getOrderApi, payOrder, refundOrder } from '@/api/order'
 import { ORDER_STATUS_MAP, PAY_STATUS_MAP } from '@/utils/constants'
 
 const order = ref<any>(null)
 const loading = ref(false)
 let orderNoStr = ''
+let pollTimer: ReturnType<typeof setInterval> | null = null
+/** 是否已完成首次加载：防止 onLoad + onShow 双重请求 */
+let initialLoaded = false
 
 onLoad((options: any) => {
   orderNoStr = options.orderNo || ''
   fetchOrder()
 })
+
+// 页面显示时刷新（仅非首次加载时，避免与 onLoad 重复请求）
+onShow(() => {
+  if (!initialLoaded) {
+    initialLoaded = true
+    return
+  }
+  if (orderNoStr) fetchOrder()
+})
+
+// 页面隐藏/卸载时清除轮询
+onHide(() => stopPolling())
+onUnmounted(() => stopPolling())
 
 function orderStatusText(s: number) { return ORDER_STATUS_MAP[s] || '未知' }
 function payStatusText(s: number) { return PAY_STATUS_MAP[s] || '未知' }
@@ -55,7 +75,36 @@ function payStatusText(s: number) { return PAY_STATUS_MAP[s] || '未知' }
 async function fetchOrder() {
   if (!orderNoStr) return
   loading.value = true
-  try { order.value = await getOrderApi(orderNoStr) } catch { /* 订单不存在时忽略 */ } finally { loading.value = false }
+  try {
+    order.value = await getOrderApi(orderNoStr)
+    // AWAITING_DEVICE（等待设备确认）开启 3 秒轮询
+    if (order.value?.orderStatus === 6) {
+      startPolling()
+    } else {
+      stopPolling()
+    }
+  } catch { /* 订单不存在时忽略 */ } finally { loading.value = false }
+}
+
+function startPolling() {
+  if (pollTimer) return
+  pollTimer = setInterval(async () => {
+    try {
+      const fresh = await getOrderApi(orderNoStr)
+      order.value = fresh
+      // AWAITING_DEVICE 状态变化 → 停止轮询
+      if (fresh?.orderStatus !== 6) {
+        stopPolling()
+      }
+    } catch { /* 静默 */ }
+  }, 3000)
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
 }
 
 function goMonitor() {

@@ -81,6 +81,26 @@ public class ConsoleController implements CommandLineRunner {
                         }
                         clientManager.recoverCharger(parts[1].toUpperCase());
                     }
+                    case "heartbeat-off" -> {
+                        if (parts.length < 2) {
+                            System.out.println("用法: heartbeat-off <SN>");
+                            break;
+                        }
+                        String sn = parts[1].toUpperCase();
+                        if (clientManager.pauseHeartbeat(sn)) {
+                            System.out.println(sn + " 心跳已暂停（空闲超时后服务端判定离线）");
+                        }
+                    }
+                    case "heartbeat-on" -> {
+                        if (parts.length < 2) {
+                            System.out.println("用法: heartbeat-on <SN>");
+                            break;
+                        }
+                        String sn = parts[1].toUpperCase();
+                        if (clientManager.resumeHeartbeat(sn)) {
+                            System.out.println(sn + " 心跳已恢复");
+                        }
+                    }
                     case "help" -> printHelp();
                     case "exit" -> {
                         System.out.println("正在停止所有虚拟充电桩...");
@@ -115,6 +135,8 @@ public class ConsoleController implements CommandLineRunner {
         System.out.println("  status            查看所有虚拟充电桩状态");
         System.out.println("  fault <sn> <type> 触发指定充电桩故障（type: TEMP/VOLT/SHORT）");
         System.out.println("  recover <sn>      恢复指定充电桩为正常状态");
+        System.out.println("  heartbeat-off <sn>暂停指定设备心跳（模拟离线）");
+        System.out.println("  heartbeat-on <sn> 恢复指定设备心跳（模拟上线）");
         System.out.println("  help              显示此帮助信息");
         System.out.println("  exit              退出模拟器");
     }

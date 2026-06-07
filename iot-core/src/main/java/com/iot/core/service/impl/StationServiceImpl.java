@@ -14,9 +14,10 @@ import com.iot.core.entity.Station;
 import com.iot.core.mapper.ChargerMapper;
 import com.iot.core.mapper.PricingRuleMapper;
 import com.iot.core.mapper.StationMapper;
+import com.iot.core.service.DeviceService;
 import com.iot.core.service.StationService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -37,12 +38,25 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class StationServiceImpl implements StationService {
 
     private final StationMapper stationMapper;
     private final ChargerMapper chargerMapper;
     private final PricingRuleMapper pricingRuleMapper;
+
+    /**
+     * DeviceService 用于查询设备是否真正在线（Redis）。
+     * required = false：当 iot-access 未加载时（如单元测试），此依赖为 null。
+     */
+    @Autowired(required = false)
+    private DeviceService deviceService;
+
+    public StationServiceImpl(StationMapper stationMapper, ChargerMapper chargerMapper,
+                              PricingRuleMapper pricingRuleMapper) {
+        this.stationMapper = stationMapper;
+        this.chargerMapper = chargerMapper;
+        this.pricingRuleMapper = pricingRuleMapper;
+    }
 
     /**
      * 获取充电站列表
@@ -198,15 +212,39 @@ public class StationServiceImpl implements StationService {
 
     /**
      * 将 Charger 实体转换为 ChargerVO
+     * <p>
+     * <b>状态一致性保证</b>：MySQL charger.status 可能与 Redis 设备在线状态不一致
+     * （如 handleOffline 更新 MySQL 失败时）。以 Redis device:status:{sn} 的 online 字段
+     * 作为在线/离线判断的权威数据源：如果 Redis 显示离线，则强制覆盖 status 为 OFFLINE，
+     * 避免前端显示在线但后端检测离线的不一致问题。
+     * </p>
      */
     private ChargerVO toChargerVO(Charger charger) {
-        DeviceStatusEnum statusEnum = DeviceStatusEnum.fromCode(charger.getStatus());
+        int displayStatus = charger.getStatus();
+
+        // 以 Redis 在线状态为准：如果设备不在线，强制显示为离线
+        if (deviceService != null && charger.getSn() != null) {
+            try {
+                if (!deviceService.isDeviceOnline(charger.getSn())) {
+                    // Redis 显示离线 → 覆盖 MySQL 状态为离线
+                    // 例外：如果 MySQL 本身就是 FAULT，保留故障状态（比离线更具体）
+                    if (displayStatus != DeviceStatusEnum.FAULT.getCode()) {
+                        displayStatus = DeviceStatusEnum.OFFLINE.getCode();
+                    }
+                }
+            } catch (Exception e) {
+                // 防御性编程：Redis 查询异常时降级使用 MySQL 数据
+                log.debug("[状态查询] Redis 在线状态查询异常 - SN: {}, 降级使用 MySQL 数据", charger.getSn());
+            }
+        }
+
+        DeviceStatusEnum statusEnum = DeviceStatusEnum.fromCode(displayStatus);
         return ChargerVO.builder()
                 .id(charger.getId())
                 .sn(charger.getSn())
                 .name(charger.getName())
                 .power(charger.getPower())
-                .status(charger.getStatus())
+                .status(displayStatus)
                 .statusDesc(statusEnum.getDesc())
                 .currentPower(charger.getCurrentPower())
                 .chargedEnergy(charger.getChargedEnergy())

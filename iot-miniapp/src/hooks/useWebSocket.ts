@@ -24,11 +24,12 @@ export function useWebSocket(path: string) {
 
   let socketTask: UniApp.SocketTask | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let manualDisconnect = false
   const handlers = new Map<string, Set<MessageHandler>>()
 
   /** 建立连接 */
   function connect() {
-    if (socketTask) return
+    if (socketTask || manualDisconnect) return
 
     const url = `${WS_BASE_URL}${path}`
     socketTask = uni.connectSocket({ url, complete: () => {} })
@@ -52,28 +53,41 @@ export function useWebSocket(path: string) {
     socketTask.onClose(() => {
       connected.value = false
       socketTask = null
-      // 3 秒后自动重连
-      reconnectTimer = setTimeout(connect, 3000)
+      // 非主动断开时 3 秒后自动重连
+      if (!manualDisconnect) {
+        reconnectTimer = setTimeout(connect, 3000)
+      }
     })
 
     socketTask.onError((err) => {
       console.error('[WS] 连接错误:', err)
-      socketTask?.close()
+      // 先保存引用再置空，防止 onClose 回调中重复触发重连
+      const task = socketTask
       socketTask = null
+      // 静默关闭：传入 fail 回调避免 closeSocket:fail task not found 报错
+      task?.close({
+        fail: (e) => console.log('[WS] close silently:', e.errMsg)
+      })
     })
   }
 
-  /** 断开连接 */
+  /** 断开连接（主动调用，不自动重连） */
   function disconnect() {
+    manualDisconnect = true
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
       reconnectTimer = null
     }
     if (socketTask) {
-      socketTask.close()
+      const task = socketTask
       socketTask = null
+      connected.value = false
+      task.close({
+        fail: (e) => console.log('[WS] close silently:', e.errMsg)
+      })
+    } else {
+      connected.value = false
     }
-    connected.value = false
   }
 
   /** 注册消息处理器 */

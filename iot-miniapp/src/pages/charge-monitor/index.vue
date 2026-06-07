@@ -11,6 +11,7 @@
       <text class="gauge-status">
         <text v-if="phase === 'pending'">⌛ 设备启动中</text>
         <text v-else-if="phase === 'charging'">⚡ 充电中</text>
+        <text v-else-if="phase === 'finished' && stopReason === 'ABNORMAL'">⚠ 设备异常已结算</text>
         <text v-else-if="phase === 'finished'">✓ 充电已结束</text>
         <text v-else>⚡ 充电中</text>
       </text>
@@ -73,12 +74,15 @@
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { stopCharge } from '@/api/charge'
+import { getOrderApi } from '@/api/order'
 import { useAuthStore } from '@/stores/authStore'
 import { useWebSocket, type WsMessage } from '@/hooks/useWebSocket'
 
 const orderNo = ref('')
 /** 充电阶段：pending(设备启动) / charging(正在充) / finished(已结束) */
 const phase = ref<'pending' | 'charging' | 'finished'>('pending')
+/** 结束原因：NORMAL=用户主动结束 / ABNORMAL=异常自动终止（服务费折扣） */
+const stopReason = ref<'NORMAL' | 'ABNORMAL' | ''>('')
 
 const data = reactive({
   voltage: '' as number | string,
@@ -99,7 +103,17 @@ onLoad((options: any) => {
   orderNo.value = options.orderNo || ''
 })
 
-onMounted(() => {
+/**
+ * 页面挂载：合并所有初始化逻辑到单个 onMounted
+ * <p>
+ * 执行顺序：
+ *   1) 登录守卫
+ *   2) 拉取订单状态（决定初始 phase）
+ *   3) 若订单已结束 → 跳转订单详情，不建立 WS
+ *   4) 否则注册 WS 消息处理器 + 建立连接
+ * </p>
+ */
+onMounted(async () => {
   // 1) 登录守卫：未登录直接跳登录页
   if (!authStore.isLoggedIn || !authStore.user?.userId) {
     uni.showToast({ title: '请先登录', icon: 'none' })
@@ -107,10 +121,35 @@ onMounted(() => {
     return
   }
 
-  // 2) 注册充电进度消息监听
+  if (!orderNo.value) return
+
+  // 2) 拉取订单当前状态，决定 phase
+  // 处理场景：
+  //   a) 进入时订单已是 PENDING_CONFIRM（启桩等待）
+  //   b) 后台异步补偿超时，订单已是 PENDING_CONFIRM 且 endTime 有值（异常自动终止）
+  //   c) 订单已是 CHARGING
+  try {
+    const order: any = await getOrderApi(orderNo.value)
+    if (order) {
+      if (order.orderStatus === 6) {
+        phase.value = 'pending'
+      } else if (order.orderStatus === 5) {
+        // 已计费账单 → 跳订单详情
+        uni.redirectTo({ url: `/pages/order-detail/index?orderNo=${encodeURIComponent(orderNo.value)}` })
+        return
+      } else if (order.orderStatus === 1) {
+        phase.value = 'charging'
+      }
+    }
+  } catch {
+    // 静默处理：API 不可用时仍建立 WS，由 WS 推送驱动 UI
+  }
+
+  // 3) 注册充电进度消息监听
   onMessage('CHARGE_PROGRESS', (msg: WsMessage) => {
     const d = msg.data || {}
-    console.log('[CHARGE_PROGRESS] raw:', JSON.stringify(d))
+    // 过滤其他订单的消息：一个用户可能同时有多个充电订单，WS 按 userId 推送，需要按 orderNo 过滤
+    if (d.orderNo && d.orderNo !== orderNo.value) return
     // 后端推送字段：orderNo, chargedEnergy, currentPower, estimatedAmount, durationSeconds, voltage, current
     // 前端展示字段：voltage, current, power, chargedEnergy, currentCost, duration
     if (d.chargedEnergy !== undefined && d.chargedEnergy !== null) {
@@ -132,32 +171,47 @@ onMounted(() => {
     phase.value = 'charging'
   })
 
-  // 3) 注册充电开始通知
+  // 4) 注册充电开始通知
   onMessage('CHARGE_START', (msg: WsMessage) => {
+    if (msg.data?.orderNo && msg.data.orderNo !== orderNo.value) return
     phase.value = 'charging'
     if (msg.data?.message) {
       uni.showToast({ title: msg.data.message, icon: 'success', duration: 1500 })
     }
   })
 
-  // 4) 注册充电结束通知
+  // 5) 注册充电结束通知
+  //    两种触发场景：
+  //    a) 用户主动停止（reason=NORMAL）：ChargeServiceImpl.stopCharge 调用 publishChargeStop
+  //    b) 异常自动终止（reason=ABNORMAL）：心跳超时定时任务触发 OrderServiceImpl.autoTerminateOrder
   onMessage('CHARGE_STOP', (msg: WsMessage) => {
-    phase.value = 'finished'
-    disconnect()
+    if (msg.data?.orderNo && msg.data.orderNo !== orderNo.value) return
+    const reason = msg.data?.reason === 'ABNORMAL' ? 'ABNORMAL' : 'NORMAL'
     const amount = msg.data?.totalAmount !== undefined ? Number(msg.data.totalAmount).toFixed(2) : '--'
+    const message = msg.data?.message || (reason === 'ABNORMAL' ? '设备异常已自动结算' : '充电已结束')
+    // 标记已结束 + 异常原因（影响模板文案与跳转目标）
+    phase.value = 'finished'
+    stopReason.value = reason
+    disconnect()
     uni.showModal({
-      title: '充电已结束',
-      content: `本次充电费用：${amount} 元`,
+      title: reason === 'ABNORMAL' ? '⚠ 异常结算' : '充电已结束',
+      content: reason === 'ABNORMAL'
+        ? `${message}\n本次费用：${amount} 元（已享服务费折扣）`
+        : `本次充电费用：${amount} 元`,
       showCancel: false,
       confirmText: '查看订单',
       success: () => {
-        uni.switchTab({ url: '/pages/order-list/index' })
+        // 跳到订单详情页而非列表 tab —— 用户需要立即看到账单/支付入口
+        uni.redirectTo({
+          url: `/pages/order-detail/index?orderNo=${encodeURIComponent(orderNo.value)}`
+        })
       }
     })
   })
 
-  // 5) 注册指令状态消息监听（启桩确认/超时/取消等）
+  // 6) 注册指令状态消息监听（启桩确认/超时/取消等）
   onMessage('COMMAND_STATUS', (msg: WsMessage) => {
+    if (msg.data?.orderNo && msg.data.orderNo !== orderNo.value) return
     const status = msg.data?.status
     const message = msg.data?.message || ''
     if (status === 'PENDING') {
@@ -178,7 +232,7 @@ onMounted(() => {
     }
   })
 
-  // 6) 建立 WebSocket 连接
+  // 7) 建立 WebSocket 连接
   connect()
 })
 
@@ -194,11 +248,22 @@ function handleStop() {
       if (res.confirm) {
         stopping.value = true
         try {
+          // 后端会通过 CHARGE_STOP WS 推送"正常结束"事件，由 onMessage 统一弹窗 + 跳转
+          // 此处只等待接口成功，然后切换到 finished 阶段作为兜底（防止 WS 断连时卡住）
           await stopCharge(orderNo.value)
-          phase.value = 'finished'
-          disconnect()
-          uni.showToast({ title: '充电已结束', icon: 'success' })
-          setTimeout(() => { uni.switchTab({ url: '/pages/order-list/index' }) }, 1000)
+          stopReason.value = 'NORMAL'
+          // 不立即 disconnect/弹窗 —— 等 WS 推送由 onMessage 处理
+          // 但若 3 秒内未收到推送（如 WS 断连），主动跳转订单详情兜底
+          setTimeout(() => {
+            if (phase.value !== 'finished') {
+              phase.value = 'finished'
+              stopReason.value = 'NORMAL'
+              disconnect()
+              uni.redirectTo({
+                url: `/pages/order-detail/index?orderNo=${encodeURIComponent(orderNo.value)}`
+              })
+            }
+          }, 3000)
         } catch {
           uni.showToast({ title: '操作失败', icon: 'none' })
         } finally {

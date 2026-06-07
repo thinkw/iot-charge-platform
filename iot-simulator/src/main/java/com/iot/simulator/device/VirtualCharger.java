@@ -69,6 +69,8 @@ public class VirtualCharger {
     private volatile double temperature;
     /** 是否正在运行 */
     private volatile boolean running;
+    /** 心跳是否暂停（用于模拟设备离线场景，不中断 MQTT 连接） */
+    private volatile boolean heartbeatPaused;
 
     // ==================== 内部组件 ====================
     /** MQTT 异步客户端 */
@@ -143,16 +145,36 @@ public class VirtualCharger {
 
     /**
      * 连接成功后初始化业务调度器
+     * <p>
+     * 根据断线前状态决定恢复策略：
+     * <ul>
+     *   <li>断线前在充电 → 恢复充电状态上报和数据推送（保留已充电量）</li>
+     *   <li>断线前非充电 → 上报 IDLE 状态</li>
+     * </ul>
+     * </p>
      */
     private void onConnected() {
         retryCount.set(0);  // 重试计数归零
+        this.heartbeatPaused = false;  // 重连后自动恢复心跳
         this.scheduler = new ScheduledThreadPoolExecutor(2,
                 Thread.ofVirtual().name("charger-" + sn + "-", 0).factory());
-        reportStatus(DeviceStatusEnum.IDLE);
-        log.info("[{}] 虚拟充电桩上线成功，状态: {}", sn,
-                status != null ? status.getDesc() : "空闲");
+
+        // 启动心跳
         heartbeatFuture = scheduler.scheduleAtFixedRate(
                 this::sendHeartbeat, heartbeatInterval, heartbeatInterval, TimeUnit.SECONDS);
+
+        // 根据断线前状态决定恢复策略
+        DeviceStatusEnum prevStatus = this.status;
+        if (prevStatus == DeviceStatusEnum.CHARGING) {
+            // 断线前在充电 → 恢复充电状态，保留已充电量不重置
+            log.info("[{}] 虚拟充电桩重连成功，恢复充电状态（已充电量: {}kWh）",
+                    sn, String.format("%.2f", chargedEnergy));
+            resumeCharging();
+        } else {
+            reportStatus(DeviceStatusEnum.IDLE);
+            log.info("[{}] 虚拟充电桩上线成功，状态: {}", sn,
+                    status != null ? status.getDesc() : "空闲");
+        }
     }
 
     /**
@@ -160,6 +182,8 @@ public class VirtualCharger {
      * <p>
      * 由 ChargeCommandCallback.connectionLost 调用（Paho 回调线程），
      * 清理旧调度器后，将重连任务提交到 reconnectScheduler。
+     * 如果心跳被主动暂停（pauseHeartbeat），则不自动重连，
+     * 等待 resumeHeartbeat 触发重连。
      * </p>
      */
     public void onDisconnected() {
@@ -179,6 +203,13 @@ public class VirtualCharger {
         }
         // 清理旧 MQTT 客户端
         closeMqttClient();
+
+        // 如果心跳被主动暂停，不自动重连，等待 resumeHeartbeat 触发
+        if (heartbeatPaused) {
+            log.info("[{}] 连接断开但心跳已暂停，跳过自动重连，等待 resumeHeartbeat", sn);
+            return;
+        }
+
         // 触发重连（提交到重连调度器线程）
         if (reconnectScheduler != null && !reconnectScheduler.isShutdown()) {
             retryCount.set(0);
@@ -275,6 +306,7 @@ public class VirtualCharger {
      */
     public void sendHeartbeat() {
         if (!running || mqttClient == null || !mqttClient.isConnected()) return;
+        if (heartbeatPaused) return;
         try {
             Map<String, Object> heartbeat = new HashMap<>();
             heartbeat.put("sn", sn);
@@ -313,6 +345,7 @@ public class VirtualCharger {
      */
     public void reportData() {
         if (!running || mqttClient == null || !mqttClient.isConnected()) return;
+        if (heartbeatPaused) return;
         try {
             Map<String, Object> data = buildDataMap();
             publish(TOPIC_DATA, JSONUtil.toJsonStr(data), 0);
@@ -396,12 +429,62 @@ public class VirtualCharger {
         sendCommandResponse("unknown", command, success, success ? "已执行" : "执行失败");
     }
 
+    // ==================== 心跳开关 ====================
+
+    /**
+     * 暂停心跳上报（模拟设备离线）
+     * <p>
+     * MQTT 连接保持，但不再发送心跳。
+     * 服务端 IdleStateHandler 将在空闲超时后触发设备离线判定。
+     * </p>
+     */
+    public void pauseHeartbeat() {
+        if (heartbeatPaused) {
+            log.info("[{}] 心跳已经处于暂停状态", sn);
+            return;
+        }
+        this.heartbeatPaused = true;
+        log.info("[{}] 心跳已暂停 — 设备将在空闲超时后被服务端判定为离线", sn);
+    }
+
+    /**
+     * 恢复心跳上报（模拟设备恢复在线）
+     * <p>
+     * 恢复心跳暂停状态。如果设备在暂停期间因空闲超时被服务端断开连接，
+     * 则主动触发重连；否则直接恢复心跳发送。
+     * </p>
+     */
+    public void resumeHeartbeat() {
+        if (!heartbeatPaused) {
+            log.info("[{}] 心跳未暂停，无需恢复", sn);
+            return;
+        }
+        this.heartbeatPaused = false;
+        log.info("[{}] 心跳已恢复", sn);
+
+        // 检查 MQTT 连接是否还存活
+        boolean disconnected = mqttClient == null || !mqttClient.isConnected();
+        if (disconnected) {
+            // 暂停期间连接已被服务端断开，触发重连
+            log.info("[{}] 设备在心跳暂停期间连接断开，触发重连", sn);
+            if (reconnectScheduler != null && !reconnectScheduler.isShutdown()) {
+                retryCount.set(0);
+                reconnectScheduler.execute(this::attemptConnection);
+            }
+        } else {
+            // 连接仍存活，立即发送心跳让服务端感知恢复
+            log.info("[{}] 连接仍存活，立即发送心跳", sn);
+            sendHeartbeat();
+        }
+    }
+
     // ==================== 充电模拟 ====================
 
     /**
      * 开始模拟充电
      * <p>
-     * 启动数据上报定时任务（每5秒），并逐步增加已充电量。
+     * 启动数据上报定时任务（每 dataReportInterval 秒），初始化充电参数（重置电量）。
+     * 首次启桩场景使用，断线重连恢复请使用 {@link #resumeCharging()}。
      * </p>
      */
     public void startCharging() {
@@ -414,7 +497,54 @@ public class VirtualCharger {
 
         reportStatus(DeviceStatusEnum.CHARGING);
 
-        // 每5秒上报一次实时数据
+        // 启动定时数据上报
+        startDataReportTask();
+
+        log.info("[{}] 开始模拟充电 - 电压:{}V, 电流:{}A, 功率:{}kW", sn, voltage, current, power);
+    }
+
+    /**
+     * 恢复充电状态（断线重连后使用）
+     * <p>
+     * 与 {@link #startCharging()} 的区别：
+     * <ul>
+     *   <li>不重置 chargedEnergy（保留断线前累积的电量）</li>
+     *   <li>重新初始化电压/电流/功率（设备重新上电后的瞬时值）</li>
+     *   <li>重新上报 CHARGING 状态并重启数据上报定时任务</li>
+     * </ul>
+     * </p>
+     */
+    private void resumeCharging() {
+        // 重新初始化瞬时参数（设备重新上电），但保留已充电量
+        this.voltage = 220 + Math.random() * 20;
+        this.current = 10 + Math.random() * 20;
+        this.power = voltage * current / 1000.0;
+        this.temperature = 35 + Math.random() * 10;  // 略高于初始温度（设备刚恢复）
+
+        // 上报 CHARGING 状态（携带当前数据，包含保留的已充电量）
+        reportStatus(DeviceStatusEnum.CHARGING);
+
+        // 重启定时数据上报
+        startDataReportTask();
+
+        log.info("[{}] 恢复充电 - 已充电量:{}kWh, 电压:{}V, 电流:{}A, 功率:{}kW",
+                sn, String.format("%.2f", chargedEnergy),
+                String.format("%.1f", voltage), String.format("%.1f", current),
+                String.format("%.2f", power));
+    }
+
+    /**
+     * 启动定时数据上报任务
+     * <p>
+     * 从 startCharging 和 resumeCharging 中提取的公共逻辑。
+     * 每 dataReportInterval 秒上报一次实时数据，充电量逐步递增。
+     * </p>
+     */
+    private void startDataReportTask() {
+        if (scheduler == null || scheduler.isShutdown()) {
+            log.warn("[{}] 调度器不可用，无法启动数据上报", sn);
+            return;
+        }
         dataReportFuture = scheduler.scheduleAtFixedRate(() -> {
             if (!running || status != DeviceStatusEnum.CHARGING) {
                 if (dataReportFuture != null) dataReportFuture.cancel(false);
@@ -427,8 +557,6 @@ public class VirtualCharger {
             this.power = voltage * current / 1000.0;          // 功率波动
             reportData();
         }, 0, dataReportInterval, TimeUnit.SECONDS);
-
-        log.info("[{}] 开始模拟充电 - 电压:{}V, 电流:{}A, 功率:{}kW", sn, voltage, current, power);
     }
 
     /**

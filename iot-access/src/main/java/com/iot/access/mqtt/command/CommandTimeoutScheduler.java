@@ -215,8 +215,8 @@ public class CommandTimeoutScheduler {
                 return;
             }
 
-            // 仅取消待确认状态的订单（防并发：可能已被对账确认为 CHARGING）
-            if (order.getOrderStatus() != OrderStatusEnum.PENDING_CONFIRM.getCode()) {
+            // 仅取消 AWAITING_DEVICE 状态的订单（防并发：可能已被对账确认为 CHARGING）
+            if (order.getOrderStatus() != OrderStatusEnum.AWAITING_DEVICE.getCode()) {
                 log.info("[指令补偿] 订单状态已变更，跳过取消 - orderNo: {}, status: {}",
                         orderNo, order.getOrderStatus());
                 return;

@@ -37,7 +37,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import { listOrdersApi } from '@/api/order'
 import { ORDER_STATUS_MAP } from '@/utils/constants'
 
@@ -47,7 +48,8 @@ const activeTab = ref<number | undefined>(undefined)
 const tabs = [
   { label: '全部', value: undefined },
   { label: '充电中', value: 1 },
-  { label: '待确认', value: 5 },
+  { label: '等待设备', value: 6 },
+  { label: '待支付', value: 5 },
   { label: '已完成', value: 2 }
 ]
 
@@ -68,7 +70,7 @@ async function fetchOrders() {
 function goDetail(orderNo: string) { uni.navigateTo({ url: `/pages/order-detail/index?orderNo=${encodeURIComponent(orderNo)}` }) }
 function goMonitor(orderNo: string) { uni.navigateTo({ url: `/pages/charge-monitor/index?orderNo=${encodeURIComponent(orderNo)}` }) }
 
-onMounted(fetchOrders)
+onShow(() => { fetchOrders() })
 </script>
 
 <style scoped>

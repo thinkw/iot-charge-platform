@@ -41,14 +41,21 @@ public enum OrderStatusEnum {
     ABNORMAL(4, "异常"),
 
     /**
-     * 待确认：订单已创建，等待设备确认指令执行结果
+     * 待支付：充电已结束，账单已生成等待用户支付
      * <p>
-     * 该状态用于混合模式启桩流程：订单创建后同步等待 3 秒，
-     * 超时未收到设备响应时订单保持此状态，由异步补偿任务处理。
-     * 设备确认后转为 CHARGING，超时后转为 CANCELLED。
+     * 来源：自动终止（autoTerminateOrder）或强制结束（forceEndOrder）后设置此状态。
+     * 用户支付后转为 COMPLETED。
      * </p>
      */
-    PENDING_CONFIRM(5, "待确认");
+    PENDING_CONFIRM(5, "待支付"),
+
+    /**
+     * 等待设备：订单已创建，等待设备确认启桩指令执行结果
+     * <p>
+     * 启桩混合模式专用。设备确认成功 → CHARGING，超时/拒绝 → CANCELLED。
+     * </p>
+     */
+    AWAITING_DEVICE(6, "等待设备");
 
     /** 状态码 */
     private final int code;

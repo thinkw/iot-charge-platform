@@ -588,7 +588,7 @@ class OrderServiceTest {
         // Verify: 订单状态被更新为完成
         ArgumentCaptor<ChargeOrder> orderCaptor = ArgumentCaptor.forClass(ChargeOrder.class);
         verify(chargeOrderMapper).updateById(orderCaptor.capture());
-        assertEquals(OrderStatusEnum.COMPLETED.getCode(), orderCaptor.getValue().getOrderStatus());
+        assertEquals(OrderStatusEnum.PENDING_CONFIRM.getCode(), orderCaptor.getValue().getOrderStatus());
 
         // Verify: 充电桩状态被恢复为空闲
         ArgumentCaptor<Charger> chargerCaptor = ArgumentCaptor.forClass(Charger.class);

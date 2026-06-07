@@ -7,6 +7,7 @@ import com.iot.common.constant.DeviceConstants;
 import com.iot.common.enums.AlarmLevelEnum;
 import com.iot.common.enums.DeviceStatusEnum;
 import com.iot.common.exception.BusinessException;
+import com.iot.core.config.DeviceOfflineConfig;
 import com.iot.core.entity.Alarm;
 import com.iot.core.entity.Charger;
 import com.iot.core.entity.DeviceLog;
@@ -21,11 +22,13 @@ import com.iot.core.event.DeviceDataReportEvent;
 import com.iot.core.service.ChargeEventPublisher;
 import com.iot.core.service.DeviceCommandSender;
 import com.iot.core.service.DeviceService;
+import com.iot.core.service.OrderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ScanOptions;
@@ -38,6 +41,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 设备管理服务实现类
@@ -59,27 +63,7 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class DeviceServiceImpl implements DeviceService {
 
-    // ==================== Redis Key 常量 ====================
-    /** 设备在线状态 Key 前缀，格式：device:status:{sn} */
-    private static final String REDIS_KEY_DEVICE_STATUS = "device:status:";
-    /** 设备实时数据 Key 前缀，格式：device:data:{sn} */
-    private static final String REDIS_KEY_DEVICE_DATA = "device:data:";
-    /** Redis Hash 中在线标识字段 */
-    private static final String FIELD_ONLINE = "online";
-    /** Redis Hash 中状态字段 */
-    private static final String FIELD_STATUS = "status";
-    /** Redis Hash 中最后心跳时间字段 */
-    private static final String FIELD_LAST_HEARTBEAT = "lastHeartbeat";
-    /** Redis Hash 中电压字段 */
-    private static final String FIELD_VOLTAGE = "voltage";
-    /** Redis Hash 中电流字段 */
-    private static final String FIELD_CURRENT = "current";
-    /** Redis Hash 中功率字段 */
-    private static final String FIELD_POWER = "power";
-    /** Redis Hash 中已充电量字段 */
-    private static final String FIELD_ENERGY = "energy";
-    /** Redis Hash 中温度字段 */
-    private static final String FIELD_TEMPERATURE = "temperature";
+    // Redis Key 和 Field 常量统一使用 DeviceConstants 中定义，不再重复声明
 
     // ==================== 依赖注入 ====================
     private final ChargerMapper chargerMapper;
@@ -89,6 +73,15 @@ public class DeviceServiceImpl implements DeviceService {
     private final RedisTemplate<String, Object> redisTemplate;
     private final RocketMQTemplate rocketMQTemplate;
     private final ApplicationEventPublisher eventPublisher;
+    private final DeviceOfflineConfig offlineConfig;
+
+    /**
+     * 订单服务，使用 @Lazy 打破与 OrderServiceImpl 之间的循环依赖。
+     * OrderServiceImpl → DeviceService → OrderService（懒加载代理，首次调用时才解析）。
+     */
+    @Lazy
+    @Autowired
+    private OrderService orderService;
 
     /**
      * 设备指令下发器，由 iot-access 模块实现 MQTT 下发。
@@ -149,10 +142,11 @@ public class DeviceServiceImpl implements DeviceService {
     /**
      * 处理设备上线
      * <p>
-     * 1. 更新 Redis 设备在线状态（online=1, status=IDLE, lastHeartbeat=当前时间）
-     * 2. 更新 MySQL charger 表状态为 IDLE、最后上线时间
-     * 3. 记录设备日志
-     * 4. 发送 RocketMQ 设备上线事件
+     * 1. 检查是否有未结 CHARGING 订单 → 有则保持 CHARGING 状态，等待设备上报
+     * 2. 更新 Redis 设备在线状态（online=1, status=IDLE 或 CHARGING）
+     * 3. 更新 MySQL charger 表状态
+     * 4. 清除离线时间标记和恢复等待标记
+     * 5. 记录设备日志 + 发送 RocketMQ 设备上线事件
      * </p>
      */
     @Override
@@ -162,28 +156,65 @@ public class DeviceServiceImpl implements DeviceService {
         long now = System.currentTimeMillis();
 
         // 1. 更新 Redis 设备状态
-        String statusKey = REDIS_KEY_DEVICE_STATUS + sn;
-        Map<String, Object> statusMap = new HashMap<>();
-        statusMap.put(FIELD_ONLINE, 1);
-        statusMap.put(FIELD_STATUS, DeviceStatusEnum.IDLE.getCode());
-        statusMap.put(FIELD_LAST_HEARTBEAT, String.valueOf(now));
-        redisTemplate.opsForHash().putAll(statusKey, statusMap);
+        String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + sn;
 
-        // 2. 更新 MySQL charger 表
+        // 2. 查 charger
         Charger charger = chargerMapper.selectOne(
                 new LambdaQueryWrapper<Charger>().eq(Charger::getSn, sn)
         );
+
+        // 3. 判断是否有未结 CHARGING 订单（恢复对账）
+        int targetStatus = DeviceStatusEnum.IDLE.getCode();
+        String logStatus = "空闲";
         if (charger != null) {
-            charger.setStatus(DeviceStatusEnum.IDLE.getCode());
+            boolean hasChargingOrder = chargeOrderMapper.selectCount(
+                    new LambdaQueryWrapper<ChargeOrder>()
+                            .eq(ChargeOrder::getChargerId, charger.getId())
+                            .eq(ChargeOrder::getOrderStatus, OrderStatusEnum.CHARGING.getCode())
+            ) > 0;
+
+            if (hasChargingOrder) {
+                // 设备在充电中离线后恢复，保持 CHARGING 状态，等待设备上报实际状态
+                targetStatus = DeviceStatusEnum.CHARGING.getCode();
+                logStatus = "充电中(恢复)";
+
+                // 记录恢复等待标记，60 秒宽限期内等待设备状态上报
+                String recoveryKey = DeviceConstants.REDIS_KEY_RECOVERY_WAIT + sn;
+                redisTemplate.opsForValue().set(recoveryKey,
+                        String.valueOf(now + offlineConfig.getRecoveryGraceSeconds() * 1000L));
+                // 设置 TTL：宽限期 + 60 秒冗余（异步任务扫描有延迟）
+                redisTemplate.expire(recoveryKey,
+                        offlineConfig.getRecoveryGraceSeconds() + 60, TimeUnit.SECONDS);
+
+                log.info("[设备上线-恢复对账] SN: {}, 发现未结CHARGING订单, 设备状态保持CHARGING, "
+                        + "宽限期={}秒, 等待设备上报实际状态",
+                        sn, offlineConfig.getRecoveryGraceSeconds());
+            }
+        }
+
+        // 4. 清除离线时间标记（设备已恢复）
+        String offlineTimeKey = DeviceConstants.REDIS_KEY_OFFLINE_TIME + sn;
+        redisTemplate.delete(offlineTimeKey);
+
+        // 5. 更新 Redis
+        Map<String, Object> statusMap = new HashMap<>();
+        statusMap.put(DeviceConstants.FIELD_ONLINE, 1);
+        statusMap.put(DeviceConstants.FIELD_STATUS, targetStatus);
+        statusMap.put(DeviceConstants.FIELD_LAST_HEARTBEAT, String.valueOf(now));
+        redisTemplate.opsForHash().putAll(statusKey, statusMap);
+
+        // 6. 更新 MySQL charger 表
+        if (charger != null) {
+            charger.setStatus(targetStatus);
             charger.setLastOnlineTime(LocalDateTime.now());
             chargerMapper.updateById(charger);
         }
 
-        // 3. 记录设备日志
+        // 7. 记录设备日志
         saveDeviceLog(charger != null ? charger.getId() : null, sn, "ONLINE",
-                "设备上线, 状态: 空闲");
+                "设备上线, 状态: " + logStatus);
 
-        // 4. 发送 RocketMQ 事件（best-effort，失败不影响主流程）
+        // 8. 发送 RocketMQ 事件（best-effort，失败不影响主流程）
         sendDeviceEvent("ONLINE", sn, charger != null ? charger.getId() : null,
                 charger != null ? charger.getStationId() : null, null);
     }
@@ -191,12 +222,18 @@ public class DeviceServiceImpl implements DeviceService {
     /**
      * 处理设备离线
      * <p>
-     * 1. 更新 Redis 设备在线状态（online=0, status=OFFLINE）
-     * 2. 更新 MySQL charger 表状态为 OFFLINE
-     * 3. 记录设备日志
-     * 4. 发送 RocketMQ 设备离线事件
-     * 5. 如果设备之前处于充电中状态，则创建离线告警
+     * 只负责标记设备离线状态和创建告警，不直接终止订单。
+     * 订单终止由 {@link #checkHeartbeatTimeout()} 统一处理，
+     * 通过延迟确认机制避免网络抖动导致误终止。
      * </p>
+     * <ol>
+     *   <li>记录离线时间戳到 Redis（供超时判断用）</li>
+     *   <li>更新 Redis 设备在线状态（online=0, status=OFFLINE）</li>
+     *   <li>更新 MySQL charger 表状态为 OFFLINE</li>
+     *   <li>记录设备日志</li>
+     *   <li>发送 RocketMQ 设备离线事件</li>
+     *   <li>如果设备之前处于充电中状态，则创建紧急告警</li>
+     * </ol>
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -204,14 +241,21 @@ public class DeviceServiceImpl implements DeviceService {
         log.info("[设备离线] SN: {}", sn);
 
         // 读取离线前的状态，用于判断是否需要告警
-        String statusKey = REDIS_KEY_DEVICE_STATUS + sn;
-        Object prevStatusObj = redisTemplate.opsForHash().get(statusKey, FIELD_STATUS);
+        String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + sn;
+        Object prevStatusObj = redisTemplate.opsForHash().get(statusKey, DeviceConstants.FIELD_STATUS);
         int prevStatus = prevStatusObj != null ? Integer.parseInt(prevStatusObj.toString()) : DeviceStatusEnum.OFFLINE.getCode();
+
+        // 0. 记录离线时间戳，供 checkHeartbeatTimeout 和 reconcileOrphanOrders 判断离线时长
+        if (prevStatus == DeviceStatusEnum.CHARGING.getCode()) {
+            String offlineTimeKey = DeviceConstants.REDIS_KEY_OFFLINE_TIME + sn;
+            redisTemplate.opsForValue().set(offlineTimeKey, String.valueOf(System.currentTimeMillis()));
+            log.info("[设备离线] SN: {} 在充电中离线，已记录离线时间戳，订单将在心跳超时后自动终止", sn);
+        }
 
         // 1. 更新 Redis 设备状态
         Map<String, Object> statusMap = new HashMap<>();
-        statusMap.put(FIELD_ONLINE, 0);
-        statusMap.put(FIELD_STATUS, DeviceStatusEnum.OFFLINE.getCode());
+        statusMap.put(DeviceConstants.FIELD_ONLINE, 0);
+        statusMap.put(DeviceConstants.FIELD_STATUS, DeviceStatusEnum.OFFLINE.getCode());
         redisTemplate.opsForHash().putAll(statusKey, statusMap);
 
         // 2. 更新 MySQL charger 表
@@ -231,7 +275,7 @@ public class DeviceServiceImpl implements DeviceService {
         sendDeviceEvent("OFFLINE", sn, charger != null ? charger.getId() : null,
                 charger != null ? charger.getStationId() : null, null);
 
-        // 5. 如果设备在充电中离线，创建紧急告警
+        // 5. 如果设备在充电中离线，创建紧急告警（订单终止由 checkHeartbeatTimeout 异步处理）
         if (prevStatus == DeviceStatusEnum.CHARGING.getCode() && charger != null) {
             createAlarm(charger.getId(), charger.getStationId(),
                     "OFFLINE", AlarmLevelEnum.URGENT.getCode(),
@@ -245,29 +289,66 @@ public class DeviceServiceImpl implements DeviceService {
      * 处理设备心跳
      * <p>
      * 更新 Redis 中设备的心跳时间戳，并确保 online 标记为 1。
-     * 如果设备之前标记为离线，首次心跳时会触发热恢复逻辑。
+     * 如果设备之前标记为离线，首次心跳时会触发热恢复逻辑：
+     * <ul>
+     *   <li>查 charger 是否有未结 CHARGING 订单 → 有则保持 CHARGING 状态</li>
+     *   <li>无 CHARGING 订单 → 设为 IDLE</li>
+     *   <li>清除离线时间标记</li>
+     * </ul>
      * </p>
      */
     @Override
     public void handleHeartbeat(String sn) {
-        String statusKey = REDIS_KEY_DEVICE_STATUS + sn;
+        String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + sn;
         long now = System.currentTimeMillis();
 
         // 检查设备之前是否离线（热恢复场景）
-        Object onlineObj = redisTemplate.opsForHash().get(statusKey, FIELD_ONLINE);
+        Object onlineObj = redisTemplate.opsForHash().get(statusKey, DeviceConstants.FIELD_ONLINE);
         boolean wasOffline = onlineObj == null || "0".equals(onlineObj.toString());
 
         // 更新心跳时间和在线状态
-        redisTemplate.opsForHash().put(statusKey, FIELD_LAST_HEARTBEAT, String.valueOf(now));
-        redisTemplate.opsForHash().put(statusKey, FIELD_ONLINE, 1);
+        redisTemplate.opsForHash().put(statusKey, DeviceConstants.FIELD_LAST_HEARTBEAT, String.valueOf(now));
+        redisTemplate.opsForHash().put(statusKey, DeviceConstants.FIELD_ONLINE, 1);
 
         if (wasOffline) {
             log.info("[心跳恢复] SN: {} 之前处于离线状态，自动触发上线恢复", sn);
-            // 确保状态为 IDLE（如果之前不是充电中）
-            Object statusObj = redisTemplate.opsForHash().get(statusKey, FIELD_STATUS);
-            if (statusObj == null || String.valueOf(DeviceStatusEnum.OFFLINE.getCode()).equals(statusObj.toString())) {
-                redisTemplate.opsForHash().put(statusKey, FIELD_STATUS, DeviceStatusEnum.IDLE.getCode());
+
+            // 清除离线时间标记
+            String offlineTimeKey = DeviceConstants.REDIS_KEY_OFFLINE_TIME + sn;
+            redisTemplate.delete(offlineTimeKey);
+
+            // 判断是否需要恢复为 CHARGING 状态（对账未结订单）
+            int targetStatus = DeviceStatusEnum.IDLE.getCode();
+            try {
+                Charger charger = chargerMapper.selectOne(
+                        new LambdaQueryWrapper<Charger>().eq(Charger::getSn, sn)
+                );
+                if (charger != null) {
+                    boolean hasChargingOrder = chargeOrderMapper.selectCount(
+                            new LambdaQueryWrapper<ChargeOrder>()
+                                    .eq(ChargeOrder::getChargerId, charger.getId())
+                                    .eq(ChargeOrder::getOrderStatus, OrderStatusEnum.CHARGING.getCode())
+                    ) > 0;
+
+                    if (hasChargingOrder) {
+                        targetStatus = DeviceStatusEnum.CHARGING.getCode();
+                        // 记录恢复等待标记
+                        String recoveryKey = DeviceConstants.REDIS_KEY_RECOVERY_WAIT + sn;
+                        redisTemplate.opsForValue().set(recoveryKey,
+                                String.valueOf(now + offlineConfig.getRecoveryGraceSeconds() * 1000L));
+                        redisTemplate.expire(recoveryKey,
+                                offlineConfig.getRecoveryGraceSeconds() + 60, TimeUnit.SECONDS);
+                        log.info("[心跳恢复-对账] SN: {}, 发现未结CHARGING订单, 设备状态设为CHARGING, 宽限期={}秒",
+                                sn, offlineConfig.getRecoveryGraceSeconds());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[心跳恢复] SN: {} 查询CHARGING订单异常，默认设为IDLE", sn, e);
             }
+
+            redisTemplate.opsForHash().put(statusKey, DeviceConstants.FIELD_STATUS, targetStatus);
+            log.info("[心跳恢复] SN: {}, 状态设为 {}", sn,
+                    DeviceStatusEnum.fromCode(targetStatus).getDesc());
         }
     }
 
@@ -287,8 +368,8 @@ public class DeviceServiceImpl implements DeviceService {
         log.info("[状态上报] SN: {}, 目标状态: {}", sn, status);
 
         // 1. 读取当前状态
-        String statusKey = REDIS_KEY_DEVICE_STATUS + sn;
-        Object currentStatusObj = redisTemplate.opsForHash().get(statusKey, FIELD_STATUS);
+        String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + sn;
+        Object currentStatusObj = redisTemplate.opsForHash().get(statusKey, DeviceConstants.FIELD_STATUS);
         int currentStatus = currentStatusObj != null ?
                 Integer.parseInt(currentStatusObj.toString()) : DeviceStatusEnum.OFFLINE.getCode();
 
@@ -301,9 +382,48 @@ public class DeviceServiceImpl implements DeviceService {
             throw new BusinessException(409, "设备状态转换不合法: " + msg);
         }
 
+        // 2.5 查询恢复等待标记（设备重连宽限期），用于后续校验
+        String recoveryKey = DeviceConstants.REDIS_KEY_RECOVERY_WAIT + sn;
+        boolean inRecovery = Boolean.TRUE.equals(redisTemplate.hasKey(recoveryKey));
+
+        // 2.6 恢复期状态校验：设备重连后如果在恢复等待期内，检查上报状态是否与预期一致
+        //     若设备有未结 CHARGING 订单但上报 IDLE，说明设备端未恢复充电状态（如模拟器重启），
+        //     拒绝 IDLE 上报并重发 START_CHARGE 指令
+        if (status == DeviceStatusEnum.IDLE.getCode() && inRecovery) {
+            // 恢复期内设备上报 IDLE → 检查是否存在未结 CHARGING 订单
+            Charger chargerForRecovery = chargerMapper.selectOne(
+                    new LambdaQueryWrapper<Charger>().eq(Charger::getSn, sn)
+            );
+            if (chargerForRecovery != null) {
+                boolean hasChargingOrder = chargeOrderMapper.selectCount(
+                        new LambdaQueryWrapper<ChargeOrder>()
+                                .eq(ChargeOrder::getChargerId, chargerForRecovery.getId())
+                                .eq(ChargeOrder::getOrderStatus, OrderStatusEnum.CHARGING.getCode())
+                ) > 0;
+
+                if (hasChargingOrder) {
+                    // 设备有未结订单但上报 IDLE → 拒绝状态变更，重发 START_CHARGE
+                    log.warn("[状态上报-恢复期拒绝] SN: {} 在恢复期内上报 IDLE，但存在 CHARGING 订单，"
+                            + "拒绝状态变更并重发启动指令", sn);
+                    // 保持当前 CHARGING 状态不变，不清除恢复标记（宽限期继续）
+                    // 重发 START_CHARGE 指令
+                    if (deviceCommandSender != null) {
+                        try {
+                            Map<String, Object> cmdParams = new HashMap<>();
+                            cmdParams.put("recovery", true);
+                            deviceCommandSender.sendCommand(sn, "START_CHARGE", cmdParams, null, null);
+                        } catch (Exception e) {
+                            log.warn("[状态上报-恢复期拒绝] 重发指令失败 - SN: {}, error: {}", sn, e.getMessage());
+                        }
+                    }
+                    return; // 不更新状态，等待设备下次上报 CHARGING
+                }
+            }
+        }
+
         // 3. 更新 Redis 状态
-        redisTemplate.opsForHash().put(statusKey, FIELD_STATUS, status);
-        redisTemplate.opsForHash().put(statusKey, FIELD_ONLINE, 1);
+        redisTemplate.opsForHash().put(statusKey, DeviceConstants.FIELD_STATUS, status);
+        redisTemplate.opsForHash().put(statusKey, DeviceConstants.FIELD_ONLINE, 1);
 
         // 4. 如果携带实时数据，更新 Redis 数据
         if (data != null && !data.isEmpty()) {
@@ -328,9 +448,15 @@ public class DeviceServiceImpl implements DeviceService {
                         newStatus.getDesc(),
                         data != null ? JSONUtil.toJsonStr(data) : "无"));
 
-        // 7. 设备上报 CHARGING 状态 → 对账确认 PENDING_CONFIRM 订单
+        // 7. 设备上报 CHARGING 状态 → 对账确认 AWAITING_DEVICE 订单
         if (status == DeviceStatusEnum.CHARGING.getCode() && charger != null) {
             reconcilePendingOrders(charger.getId(), sn);
+        }
+
+        // 7.5 设备主动上报状态后，清除恢复等待标记（设备已告知实际状态，宽限期结束）
+        if (inRecovery) {
+            redisTemplate.delete(recoveryKey);
+            log.info("[状态上报] SN: {} 已上报状态, 清除恢复等待标记", sn);
         }
 
         // 8. 发送 MQ 事件
@@ -406,8 +532,8 @@ public class DeviceServiceImpl implements DeviceService {
         createAlarm(charger.getId(), charger.getStationId(), alarmType, alarmLevel, content);
 
         // 3. 更新设备状态为故障
-        String statusKey = REDIS_KEY_DEVICE_STATUS + sn;
-        redisTemplate.opsForHash().put(statusKey, FIELD_STATUS, DeviceStatusEnum.FAULT.getCode());
+        String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + sn;
+        redisTemplate.opsForHash().put(statusKey, DeviceConstants.FIELD_STATUS, DeviceStatusEnum.FAULT.getCode());
         charger.setStatus(DeviceStatusEnum.FAULT.getCode());
         chargerMapper.updateById(charger);
 
@@ -533,8 +659,8 @@ public class DeviceServiceImpl implements DeviceService {
 
     @Override
     public boolean isDeviceOnline(String sn) {
-        String statusKey = REDIS_KEY_DEVICE_STATUS + sn;
-        Object onlineObj = redisTemplate.opsForHash().get(statusKey, FIELD_ONLINE);
+        String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + sn;
+        Object onlineObj = redisTemplate.opsForHash().get(statusKey, DeviceConstants.FIELD_ONLINE);
         return onlineObj != null && "1".equals(onlineObj.toString());
     }
 
@@ -547,24 +673,33 @@ public class DeviceServiceImpl implements DeviceService {
      * 将超过 90 秒（{@link DeviceConstants#HEARTBEAT_TIMEOUT}）未收到心跳的设备标记为离线。
      * </p>
      */
+    /**
+     * 定时检查设备心跳超时
+     * <p>
+     * 使用配置的扫描间隔（默认 30 秒），扫描 Redis 中所有设备的心跳时间，
+     * 将超过心跳超时阈值（默认 90 秒）的设备标记为离线。
+     * 同时，如果设备之前处于充电中状态，则自动终止关联的 CHARGING 订单。
+     * <b>此方法是订单自动终止的唯一入口。</b>
+     * </p>
+     */
     @Override
-    @Scheduled(fixedRate = 30000)
+    @Scheduled(fixedDelayString = "${device.offline.heartbeat-scan-interval-ms:30000}")
     public void checkHeartbeatTimeout() {
         long now = System.currentTimeMillis();
-        long timeoutMillis = DeviceConstants.HEARTBEAT_TIMEOUT * 1000L;
+        long timeoutMillis = offlineConfig.getHeartbeatTimeoutSeconds() * 1000L;
 
         try {
             // 使用 SCAN 命令遍历所有 device:status:* 的 key（避免 KEYS 阻塞 Redis）
             ScanOptions scanOptions = ScanOptions.scanOptions()
-                    .match(REDIS_KEY_DEVICE_STATUS + "*")
+                    .match(DeviceConstants.REDIS_KEY_DEVICE_STATUS + "*")
                     .count(100)
                     .build();
             try (Cursor<String> cursor = redisTemplate.scan(scanOptions)) {
                 while (cursor.hasNext()) {
                     String key = cursor.next();
                     try {
-                        Object heartbeatObj = redisTemplate.opsForHash().get(key, FIELD_LAST_HEARTBEAT);
-                        Object onlineObj = redisTemplate.opsForHash().get(key, FIELD_ONLINE);
+                        Object heartbeatObj = redisTemplate.opsForHash().get(key, DeviceConstants.FIELD_LAST_HEARTBEAT);
+                        Object onlineObj = redisTemplate.opsForHash().get(key, DeviceConstants.FIELD_ONLINE);
 
                         if (heartbeatObj == null) {
                             continue;
@@ -576,10 +711,14 @@ public class DeviceServiceImpl implements DeviceService {
                         // 设备在线但心跳超时 → 标记离线
                         if (isOnline && (now - lastHeartbeat) > timeoutMillis) {
                             // 从 key 中提取 SN（key格式: device:status:CHARGER-001）
-                            String sn = key.substring(REDIS_KEY_DEVICE_STATUS.length());
-                            log.warn("[心跳超时] SN: {}, 最后心跳: {}ms 前，标记离线",
-                                    sn, now - lastHeartbeat);
+                            String sn = key.substring(DeviceConstants.REDIS_KEY_DEVICE_STATUS.length());
+                            long offlineDuration = now - lastHeartbeat;
+                            log.warn("[心跳超时] SN: {}, 最后心跳: {}ms 前，触发离线处理及订单终止检查",
+                                    sn, offlineDuration);
                             handleOffline(sn);
+
+                            // 检查并终止该设备关联的 CHARGING 订单（唯一终止入口）
+                            terminateChargingOrdersForDevice(sn);
                         }
                     } catch (Exception e) {
                         log.error("[心跳超时] 处理 key={} 时发生异常", key, e);
@@ -588,6 +727,208 @@ public class DeviceServiceImpl implements DeviceService {
             }
         } catch (Exception e) {
             log.error("[心跳超时] 心跳检测定时任务异常", e);
+        }
+    }
+
+    /**
+     * 终止指定设备上所有 CHARGING 状态的订单
+     * <p>
+     * 查询该设备 SN 关联充电桩上所有 orderStatus=CHARGING 的订单，
+     * 逐一调用 {@link OrderService#autoTerminateOrder(String, String)} 进行终止。
+     * 每个订单内部已有分布式锁和双重检查保护，此处不做额外加锁。
+     * </p>
+     *
+     * @param sn 设备唯一序列号
+     */
+    private void terminateChargingOrdersForDevice(String sn) {
+        try {
+            Charger charger = chargerMapper.selectOne(
+                    new LambdaQueryWrapper<Charger>().eq(Charger::getSn, sn)
+            );
+            if (charger == null) {
+                return;
+            }
+
+            var chargingOrders = chargeOrderMapper.selectList(
+                    new LambdaQueryWrapper<ChargeOrder>()
+                            .eq(ChargeOrder::getChargerId, charger.getId())
+                            .eq(ChargeOrder::getOrderStatus, OrderStatusEnum.CHARGING.getCode())
+            );
+
+            if (chargingOrders == null || chargingOrders.isEmpty()) {
+                return;
+            }
+
+            log.info("[心跳超时-订单终止] SN: {}, 发现 {} 个 CHARGING 订单待终止",
+                    sn, chargingOrders.size());
+
+            for (ChargeOrder order : chargingOrders) {
+                try {
+                    long offlineMillis = getOfflineDuration(sn);
+                    String reason = "DEVICE_OFFLINE_TIMEOUT";
+                    log.info("[心跳超时-订单终止] SN: {}, orderNo: {}, 离线时长={}ms, 触发自动终止",
+                            sn, order.getOrderNo(), offlineMillis);
+                    orderService.autoTerminateOrder(order.getOrderNo(), reason);
+                } catch (Exception e) {
+                    log.error("[心跳超时-订单终止] orderNo: {} 终止异常", order.getOrderNo(), e);
+                }
+            }
+        } catch (Exception e) {
+            log.error("[心跳超时-订单终止] SN: {} 查询CHARGING订单异常", sn, e);
+        }
+    }
+
+    /**
+     * 获取设备离线时长（毫秒）
+     *
+     * @param sn 设备序列号
+     * @return 离线时长毫秒数，无记录时返回 0
+     */
+    private long getOfflineDuration(String sn) {
+        try {
+            String offlineTimeKey = DeviceConstants.REDIS_KEY_OFFLINE_TIME + sn;
+            Object offlineTimeObj = redisTemplate.opsForValue().get(offlineTimeKey);
+            if (offlineTimeObj != null) {
+                long offlineTime = Long.parseLong(offlineTimeObj.toString());
+                return System.currentTimeMillis() - offlineTime;
+            }
+        } catch (Exception e) {
+            log.debug("[离线时长] SN: {} 获取离线时长失败", sn, e);
+        }
+        return 0;
+    }
+
+    /**
+     * 兜底定时任务：扫描孤儿订单（设备离线但订单仍为 CHARGING）
+     * <p>
+     * 作为 {@link #checkHeartbeatTimeout()} 的兜底保障，使用配置的扫描间隔（默认 60 秒）。
+     * 扫描条件：
+     * <ul>
+     *   <li>Redis device:status:{sn} online=0（设备已离线）</li>
+     *   <li>Redis device:offline:time:{sn} 距今 &gt; terminateDelaySeconds（离线超时）</li>
+     *   <li>DB 中存在 orderStatus=CHARGING 的订单关联此充电桩</li>
+     * </ul>
+     * 覆盖以下遗漏场景：
+     * <ul>
+     *   <li>心跳超时扫描时 charger 尚不存在于 DB</li>
+     *   <li>handleOffline 被调用但 checkHeartbeatTimeout 未覆盖到</li>
+     *   <li>Redis 离线标记存在但心跳超时扫描因异常跳过</li>
+     * </ul>
+     * </p>
+     */
+    @Scheduled(fixedDelayString = "${device.offline.orphan-scan-interval-ms:60000}")
+    public void reconcileOrphanOrders() {
+        long now = System.currentTimeMillis();
+        long terminateDelayMs = offlineConfig.getTerminateDelaySeconds() * 1000L;
+
+        try {
+            log.debug("[孤儿订单扫描] 开始扫描...");
+            int terminatedCount = 0;
+
+            // 1. 扫描所有设备离线时间标记
+            ScanOptions scanOptions = ScanOptions.scanOptions()
+                    .match(DeviceConstants.REDIS_KEY_OFFLINE_TIME + "*")
+                    .count(100)
+                    .build();
+            try (Cursor<String> cursor = redisTemplate.scan(scanOptions)) {
+                while (cursor.hasNext()) {
+                    String offlineTimeKey = cursor.next();
+                    try {
+                        // 从 key 提取 SN（格式: device:offline:time:CHARGER-001）
+                        String sn = offlineTimeKey.substring(
+                                DeviceConstants.REDIS_KEY_OFFLINE_TIME.length());
+
+                        // 2. 检查设备是否仍在线（在线则跳过）
+                        String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + sn;
+                        Object onlineObj = redisTemplate.opsForHash().get(statusKey,
+                                DeviceConstants.FIELD_ONLINE);
+                        boolean isOnline = onlineObj != null && "1".equals(onlineObj.toString());
+                        if (isOnline) {
+                            // 设备已恢复在线，清除离线时间标记
+                            redisTemplate.delete(offlineTimeKey);
+                            continue;
+                        }
+
+                        // 3. 检查离线时长是否超过终止延迟阈值
+                        Object offlineTimeObj = redisTemplate.opsForValue().get(offlineTimeKey);
+                        if (offlineTimeObj == null) {
+                            continue;
+                        }
+                        long offlineTime = Long.parseLong(offlineTimeObj.toString());
+                        long offlineDuration = now - offlineTime;
+                        if (offlineDuration < terminateDelayMs) {
+                            continue; // 未到终止延迟阈值，等待
+                        }
+
+                        // 4. 查 charger 并终止 CHARGING 订单
+                        Charger charger = chargerMapper.selectOne(
+                                new LambdaQueryWrapper<Charger>().eq(Charger::getSn, sn)
+                        );
+                        if (charger == null) {
+                            continue;
+                        }
+
+                        var chargingOrders = chargeOrderMapper.selectList(
+                                new LambdaQueryWrapper<ChargeOrder>()
+                                        .eq(ChargeOrder::getChargerId, charger.getId())
+                                        .eq(ChargeOrder::getOrderStatus, OrderStatusEnum.CHARGING.getCode())
+                        );
+                        boolean hasChargingOrPending = false;
+
+                        if (chargingOrders != null && !chargingOrders.isEmpty()) {
+                            hasChargingOrPending = true;
+                            for (ChargeOrder order : chargingOrders) {
+                                try {
+                                    log.info("[孤儿订单扫描] SN: {}, orderNo: {}, 离线时长={}ms, 兜底终止",
+                                            sn, order.getOrderNo(), offlineDuration);
+                                    orderService.autoTerminateOrder(order.getOrderNo(),
+                                            "ORPHAN_ORDER_RECONCILE");
+                                    terminatedCount++;
+                                } catch (Exception e) {
+                                    log.error("[孤儿订单扫描] orderNo: {} 终止异常", order.getOrderNo(), e);
+                                }
+                            }
+                        }
+
+                        // 5. 兜底清理 AWAITING_DEVICE 订单（启桩等待中设备离线）
+                        //    AWAITING_DEVICE 订单无电量消耗，直接取消即可，无需计费
+                        var awaitingOrders = chargeOrderMapper.selectList(
+                                new LambdaQueryWrapper<ChargeOrder>()
+                                        .eq(ChargeOrder::getChargerId, charger.getId())
+                                        .eq(ChargeOrder::getOrderStatus,
+                                                OrderStatusEnum.AWAITING_DEVICE.getCode())
+                        );
+                        if (awaitingOrders != null && !awaitingOrders.isEmpty()) {
+                            hasChargingOrPending = true;
+                            for (ChargeOrder order : awaitingOrders) {
+                                try {
+                                    log.info("[孤儿订单扫描] SN: {}, 取消 AWAITING_DEVICE 订单 orderNo: {}, 离线时长={}ms",
+                                            sn, order.getOrderNo(), offlineDuration);
+                                    order.setOrderStatus(OrderStatusEnum.CANCELLED.getCode());
+                                    chargeOrderMapper.updateById(order);
+                                    terminatedCount++;
+                                } catch (Exception e) {
+                                    log.error("[孤儿订单扫描] AWAITING_DEVICE orderNo: {} 取消失败",
+                                            order.getOrderNo(), e);
+                                }
+                            }
+                        }
+
+                        if (!hasChargingOrPending) {
+                            // 无 CHARGING/ AWAITING_DEVICE 订单，清除离线时间标记
+                            redisTemplate.delete(offlineTimeKey);
+                        }
+                    } catch (Exception e) {
+                        log.error("[孤儿订单扫描] 处理 key={} 异常", offlineTimeKey, e);
+                    }
+                }
+            }
+
+            if (terminatedCount > 0) {
+                log.info("[孤儿订单扫描] 完成，本次终止/取消 {} 个孤儿订单", terminatedCount);
+            }
+        } catch (Exception e) {
+            log.error("[孤儿订单扫描] 扫描任务异常", e);
         }
     }
 
@@ -600,7 +941,7 @@ public class DeviceServiceImpl implements DeviceService {
      * @param data 实时数据 Map
      */
     private void updateRedisDeviceData(String sn, Map<String, Object> data) {
-        String dataKey = REDIS_KEY_DEVICE_DATA + sn;
+        String dataKey = DeviceConstants.REDIS_KEY_DEVICE_DATA + sn;
         Map<String, Object> hashData = new HashMap<>();
 
         // 将 data 中的值转为 String 存储（Redis Hash 只能存字符串）
@@ -626,28 +967,28 @@ public class DeviceServiceImpl implements DeviceService {
             return;
         }
 
-        if (data.containsKey(FIELD_VOLTAGE) && data.get(FIELD_VOLTAGE) != null) {
-            charger.setCurrentVoltage(new BigDecimal(data.get(FIELD_VOLTAGE).toString()));
+        if (data.containsKey(DeviceConstants.FIELD_VOLTAGE) && data.get(DeviceConstants.FIELD_VOLTAGE) != null) {
+            charger.setCurrentVoltage(new BigDecimal(data.get(DeviceConstants.FIELD_VOLTAGE).toString()));
         }
-        if (data.containsKey(FIELD_CURRENT) && data.get(FIELD_CURRENT) != null) {
-            charger.setCurrentCurrent(new BigDecimal(data.get(FIELD_CURRENT).toString()));
+        if (data.containsKey(DeviceConstants.FIELD_CURRENT) && data.get(DeviceConstants.FIELD_CURRENT) != null) {
+            charger.setCurrentCurrent(new BigDecimal(data.get(DeviceConstants.FIELD_CURRENT).toString()));
         }
-        if (data.containsKey(FIELD_POWER) && data.get(FIELD_POWER) != null) {
-            charger.setCurrentPower(new BigDecimal(data.get(FIELD_POWER).toString()));
+        if (data.containsKey(DeviceConstants.FIELD_POWER) && data.get(DeviceConstants.FIELD_POWER) != null) {
+            charger.setCurrentPower(new BigDecimal(data.get(DeviceConstants.FIELD_POWER).toString()));
         }
-        if (data.containsKey(FIELD_ENERGY) && data.get(FIELD_ENERGY) != null) {
-            charger.setChargedEnergy(new BigDecimal(data.get(FIELD_ENERGY).toString()));
+        if (data.containsKey(DeviceConstants.FIELD_ENERGY) && data.get(DeviceConstants.FIELD_ENERGY) != null) {
+            charger.setChargedEnergy(new BigDecimal(data.get(DeviceConstants.FIELD_ENERGY).toString()));
         }
-        if (data.containsKey(FIELD_TEMPERATURE) && data.get(FIELD_TEMPERATURE) != null) {
-            charger.setTemperature(new BigDecimal(data.get(FIELD_TEMPERATURE).toString()));
+        if (data.containsKey(DeviceConstants.FIELD_TEMPERATURE) && data.get(DeviceConstants.FIELD_TEMPERATURE) != null) {
+            charger.setTemperature(new BigDecimal(data.get(DeviceConstants.FIELD_TEMPERATURE).toString()));
         }
     }
 
     /**
-     * 设备状态对账：确认 PENDING_CONFIRM 订单
+     * 设备状态对账：确认 AWAITING_DEVICE 订单
      * <p>
      * 当设备主动上报 CHARGING 状态时，说明设备实际已开始充电。
-     * 查询该充电桩上所有 PENDING_CONFIRM 的订单，自动转为 CHARGING 状态。
+     * 查询该充电桩上所有 AWAITING_DEVICE 的订单，自动转为 CHARGING 状态。
      * 解决指令响应丢失导致的"设备在充电但订单未确认"问题。
      * </p>
      *
@@ -656,11 +997,12 @@ public class DeviceServiceImpl implements DeviceService {
      */
     private void reconcilePendingOrders(Long chargerId, String sn) {
         try {
-            // 查询该充电桩上状态为 PENDING_CONFIRM 的订单
+            // 查询该充电桩上状态为 AWAITING_DEVICE 的订单
+            // （AWAITING_DEVICE 专用于启桩等待阶段，不会与已计费账单 PENDING_CONFIRM 冲突）
             var orders = chargeOrderMapper.selectList(
                     new LambdaQueryWrapper<ChargeOrder>()
                             .eq(ChargeOrder::getChargerId, chargerId)
-                            .eq(ChargeOrder::getOrderStatus, OrderStatusEnum.PENDING_CONFIRM.getCode())
+                            .eq(ChargeOrder::getOrderStatus, OrderStatusEnum.AWAITING_DEVICE.getCode())
                             .orderByDesc(ChargeOrder::getStartTime)
             );
 

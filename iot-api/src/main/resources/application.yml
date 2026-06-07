@@ -19,8 +19,11 @@ spring:
 
 logging:
   level:
-    com.iot: DEBUG           # 项目自身日志
-    io.netty: INFO            # Netty 保持 INFO
+    com.iot: INFO                          # 全局默认 INFO，关掉所有 DEBUG
+    com.iot.core.service.impl: DEBUG       # 核心业务保留 DEBUG（充电/设备/订单）
+    io.netty: WARN                         # Netty 降噪
+    org.eclipse.paho: WARN                 # MQTT 客户端 SDK
+    org.apache.rocketmq: WARN              # RocketMQ 客户端 SDK
 
 # MyBatis-Plus 配置
 mybatis-plus:
@@ -71,3 +74,13 @@ mqtt:
     max-retries: 2             # 最大重试次数（不含首次发送）
     retry-interval-ms: 2000    # 重试间隔（毫秒）
     scan-interval-ms: 5000     # 定时扫描间隔（毫秒）
+
+# 设备离线与订单对账配置
+device:
+  offline:
+    heartbeat-timeout-seconds: 30      # 心跳超时阈值（90秒），超过此时间未收到心跳则认为设备离线
+    heartbeat-scan-interval-ms: 10000  # 心跳超时扫描间隔（30000毫秒）
+    terminate-delay-seconds: 40       # 离线后终止订单延迟（120秒），防网络抖动导致误终止
+    recovery-grace-seconds: 60         # 设备恢复后等待状态上报宽限期（60秒）
+    orphan-scan-interval-ms: 28000     # 孤儿订单扫描间隔（60000毫秒），兜底任务扫描频率
+    service-fee-discount: 0.5          # 异常终止时服务费折扣率（0.0~1.0），0.5 表示五折

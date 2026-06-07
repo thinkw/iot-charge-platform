@@ -259,7 +259,7 @@ class ChargeServiceTest {
         }
 
         @Test
-        @DisplayName("同步等待超时（TIMEOUT）→ 订单创建成功，状态为 PENDING_CONFIRM")
+        @DisplayName("同步等待超时（TIMEOUT）→ 订单创建成功，状态为 AWAITING_DEVICE")
         void startCharge_timeout_orderCreatedWithPendingConfirm() {
             when(chargerMapper.selectById(CHARGER_ID)).thenReturn(idleCharger);
             when(deviceService.sendCommandAndWait(anyString(), anyString(), anyMap(),
@@ -269,7 +269,7 @@ class ChargeServiceTest {
             ChargeOrder result = chargeService.startCharge(USER_ID, CHARGER_ID);
 
             assertNotNull(result);
-            assertEquals(OrderStatusEnum.PENDING_CONFIRM.getCode(), result.getOrderStatus());
+            assertEquals(OrderStatusEnum.AWAITING_DEVICE.getCode(), result.getOrderStatus());
         }
     }
 
@@ -320,7 +320,7 @@ class ChargeServiceTest {
 
             ChargeOrder result = chargeService.stopCharge(USER_ID, ORDER_NO);
 
-            assertEquals(OrderStatusEnum.COMPLETED.getCode(), result.getOrderStatus());
+            assertEquals(OrderStatusEnum.PENDING_CONFIRM.getCode(), result.getOrderStatus());
             assertEquals(new BigDecimal("15.5"), result.getChargedEnergy());
             assertEquals(new BigDecimal("10.00"), result.getElectricityFee());
             assertEquals(new BigDecimal("5.00"), result.getServiceFee());

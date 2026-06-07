@@ -70,17 +70,33 @@ public class WebSocketChargeEventPublisher implements ChargeEventPublisher {
 
     /**
      * 推送充电结束通知
+     * <p>
+     * 兼容旧调用：未传 reason 时默认为 NORMAL（用户主动结束）。
+     * 异常终止场景（如心跳超时自动终止）会传 ABNORMAL，前端据此展示不同文案。
+     * </p>
      */
     @Override
     public void publishChargeStop(Long userId, String orderNo, BigDecimal totalAmount) {
+        publishChargeStop(userId, orderNo, totalAmount, "NORMAL");
+    }
+
+    /**
+     * 推送充电结束通知（带原因）
+     *
+     * @param reason NORMAL=用户主动结束 / ABNORMAL=异常自动终止（服务费折扣）
+     */
+    public void publishChargeStop(Long userId, String orderNo, BigDecimal totalAmount, String reason) {
         Map<String, Object> data = new HashMap<>();
         data.put("orderNo", orderNo);
         data.put("totalAmount", totalAmount);
-        data.put("message", "充电已结束，请支付");
+        data.put("reason", reason);
+        data.put("message", "ABNORMAL".equals(reason)
+                ? "设备异常已自动结算，请查看账单"
+                : "充电已结束，请支付");
 
         sessionManager.sendToUser(userId, "CHARGE_STOP", data);
-        log.debug("[WS推送] 充电停止 - userId: {}, orderNo: {}, amount: {}",
-                userId, orderNo, totalAmount);
+        log.debug("[WS推送] 充电停止 - userId: {}, orderNo: {}, amount: {}, reason: {}",
+                userId, orderNo, totalAmount, reason);
     }
 
     /**

@@ -2,6 +2,7 @@
 package com.iot.core.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.iot.common.constant.DeviceConstants;
 import com.iot.common.exception.BusinessException;
 import com.iot.common.model.PageResult;
 import com.iot.core.dto.response.*;
@@ -51,8 +52,7 @@ public class StatisticsServiceImpl implements StatisticsService {
     private final AlarmService alarmService;
     private final RedisTemplate<String, Object> redisTemplate;
 
-    /** 设备状态 Redis Key 前缀 */
-    private static final String DEVICE_STATUS_PREFIX = "device:status:";
+    /** Redis Key 常量统一使用 DeviceConstants */
 
     /** Dashboard 本地缓存（DashboardPushScheduler 每 5 秒轮询，避免重复 SCAN+MySQL） */
     private volatile DashboardVO cachedDashboard;
@@ -295,7 +295,7 @@ public class StatisticsServiceImpl implements StatisticsService {
      */
     private Cursor<String> scanDeviceStatusKeys() {
         ScanOptions options = ScanOptions.scanOptions()
-                .match(DEVICE_STATUS_PREFIX + "*")
+                .match(DeviceConstants.REDIS_KEY_DEVICE_STATUS + "*")
                 .count(100)
                 .build();
         return redisTemplate.scan(options);

@@ -1,6 +1,7 @@
 package com.iot.core.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.iot.common.constant.DeviceConstants;
 import com.iot.common.constant.OrderConstants;
 import com.iot.common.enums.DeviceStatusEnum;
 import com.iot.common.enums.OrderStatusEnum;
@@ -50,12 +51,7 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class ChargeServiceImpl implements ChargeService {
 
-    /** Redis 设备状态 Key 前缀 */
-    private static final String REDIS_KEY_DEVICE_STATUS = "device:status:";
-    /** Redis 设备数据 Key 前缀 */
-    private static final String REDIS_KEY_DEVICE_DATA = "device:data:";
-    /** 分布式锁 Key 前缀 */
-    private static final String LOCK_KEY_PREFIX = "charge:lock:";
+    /** Redis Key 和 Field 常量统一使用 DeviceConstants */
 
     /** 分布式锁等待时间（秒） */
     private static final long LOCK_WAIT_TIME = 3;
@@ -107,7 +103,7 @@ public class ChargeServiceImpl implements ChargeService {
         }
 
         // 3. 获取分布式锁
-        RLock lock = redissonClient.getLock(LOCK_KEY_PREFIX + chargerId);
+        RLock lock = redissonClient.getLock(DeviceConstants.REDIS_KEY_CHARGE_LOCK + chargerId);
         boolean locked = false;
         try {
             locked = lock.tryLock(LOCK_WAIT_TIME, LOCK_LEASE_TIME, TimeUnit.SECONDS);
@@ -126,7 +122,7 @@ public class ChargeServiceImpl implements ChargeService {
             // 记录设备当前状态，用于失败时回滚
             int prevChargerStatus = freshCharger.getStatus();
             String sn = freshCharger.getSn();
-            String statusKey = REDIS_KEY_DEVICE_STATUS + sn;
+            String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + sn;
 
             // 5. 创建充电订单 — 状态为 PENDING_CONFIRM（等待设备确认）
             //    注意：充电桩状态暂不修改，等设备确认后再更新
@@ -137,7 +133,7 @@ public class ChargeServiceImpl implements ChargeService {
             order.setChargerId(chargerId);
             order.setStationId(freshCharger.getStationId());
             order.setStartTime(LocalDateTime.now());
-            order.setOrderStatus(OrderStatusEnum.PENDING_CONFIRM.getCode());  // ← 待确认状态
+            order.setOrderStatus(OrderStatusEnum.AWAITING_DEVICE.getCode());  // ← 等待设备确认
             order.setPayStatus(PayStatusEnum.UNPAID.getCode());
             chargeOrderMapper.insert(order);
 
@@ -212,7 +208,7 @@ public class ChargeServiceImpl implements ChargeService {
      * 结束充电
      * <p>
      * 对于 CHARGING 状态订单：下发停止指令、计费、更新状态。
-     * 对于 PENDING_CONFIRM 状态订单：直接取消（设备尚未确认启动，无需下发停止指令）。
+     * 对于 AWAITING_DEVICE 状态订单：直接取消（设备尚未确认启动，无需下发停止指令）。
      * </p>
      */
     @Override
@@ -223,9 +219,9 @@ public class ChargeServiceImpl implements ChargeService {
         // 1. 查找并校验订单
         ChargeOrder order = findAndValidateOrder(orderNo, userId);
 
-        // 1.5 特殊处理：PENDING_CONFIRM 订单直接取消，无需下发指令和计费
-        if (order.getOrderStatus() == OrderStatusEnum.PENDING_CONFIRM.getCode()) {
-            log.info("[停桩] PENDING_CONFIRM 订单直接取消 - orderNo: {}", orderNo);
+        // 1.5 特殊处理：AWAITING_DEVICE 订单直接取消，无需下发指令和计费
+        if (order.getOrderStatus() == OrderStatusEnum.AWAITING_DEVICE.getCode()) {
+            log.info("[停桩] AWAITING_DEVICE 订单直接取消 - orderNo: {}", orderNo);
             order.setOrderStatus(OrderStatusEnum.CANCELLED.getCode());
             chargeOrderMapper.updateById(order);
             // 推送取消通知
@@ -249,7 +245,7 @@ public class ChargeServiceImpl implements ChargeService {
 
         // 4. 从 Redis 读取设备最后上报的充电数据
         Map<Object, Object> deviceData = redisTemplate.opsForHash()
-                .entries(REDIS_KEY_DEVICE_DATA + charger.getSn());
+                .entries(DeviceConstants.REDIS_KEY_DEVICE_DATA + charger.getSn());
         BigDecimal finalEnergy = BigDecimal.ZERO;
         if (deviceData != null && deviceData.containsKey("energy")) {
             finalEnergy = new BigDecimal(deviceData.get("energy").toString());
@@ -266,7 +262,7 @@ public class ChargeServiceImpl implements ChargeService {
         order.setElectricityFee(feeDetail.electricityFee());
         order.setServiceFee(feeDetail.serviceFee());
         order.setTotalAmount(feeDetail.totalAmount());
-        order.setOrderStatus(OrderStatusEnum.COMPLETED.getCode());
+        order.setOrderStatus(OrderStatusEnum.PENDING_CONFIRM.getCode());
         chargeOrderMapper.updateById(order);
 
         // 7. 更新充电桩状态为空闲
@@ -275,7 +271,7 @@ public class ChargeServiceImpl implements ChargeService {
         chargerMapper.updateById(charger);
 
         // 同步更新 Redis
-        String statusKey = REDIS_KEY_DEVICE_STATUS + charger.getSn();
+        String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + charger.getSn();
         redisTemplate.opsForHash().put(statusKey, "status",
                 String.valueOf(DeviceStatusEnum.IDLE.getCode()));
 
@@ -318,7 +314,7 @@ public class ChargeServiceImpl implements ChargeService {
 
         // 3. 从 Redis 读取实时数据
         Map<Object, Object> deviceData = redisTemplate.opsForHash()
-                .entries(REDIS_KEY_DEVICE_DATA + charger.getSn());
+                .entries(DeviceConstants.REDIS_KEY_DEVICE_DATA + charger.getSn());
 
         BigDecimal voltage = null;
         BigDecimal current = null;
@@ -511,9 +507,9 @@ public class ChargeServiceImpl implements ChargeService {
         if (!order.getUserId().equals(userId)) {
             throw new BusinessException(403, "无权操作该订单");
         }
-        // 仅允许 CHARGING（正常充电中）和 PENDING_CONFIRM（等待设备确认）状态操作
+        // 仅允许 CHARGING（正常充电中）和 AWAITING_DEVICE（等待设备确认）状态操作
         if (order.getOrderStatus() != OrderStatusEnum.CHARGING.getCode()
-                && order.getOrderStatus() != OrderStatusEnum.PENDING_CONFIRM.getCode()) {
+                && order.getOrderStatus() != OrderStatusEnum.AWAITING_DEVICE.getCode()) {
             throw new BusinessException(409, "订单状态不允许此操作，当前状态: "
                     + OrderStatusEnum.fromCode(order.getOrderStatus()).getDesc());
         }

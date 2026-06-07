@@ -1,7 +1,9 @@
 package com.iot.core.service;
 
+import com.iot.core.config.DeviceOfflineConfig;
 import com.iot.core.entity.Charger;
 import com.iot.core.mapper.AlarmMapper;
+import com.iot.core.mapper.ChargeOrderMapper;
 import com.iot.core.mapper.ChargerMapper;
 import com.iot.core.mapper.DeviceLogMapper;
 import com.iot.core.service.impl.DeviceServiceImpl;
@@ -15,8 +17,12 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+
+import java.math.BigDecimal;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -42,9 +48,14 @@ class DeviceServiceTest {
     @Mock private ChargerMapper chargerMapper;
     @Mock private DeviceLogMapper deviceLogMapper;
     @Mock private AlarmMapper alarmMapper;
+    @Mock private ChargeOrderMapper chargeOrderMapper;
     @Mock private RedisTemplate<String, Object> redisTemplate;
     @Mock private HashOperations<String, Object, Object> hashOperations;
+    @Mock private ValueOperations<String, Object> valueOperations;
     @Mock private RocketMQTemplate rocketMQTemplate;
+    @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private OrderService orderService;
+    @Mock private DeviceOfflineConfig offlineConfig;
 
     @InjectMocks
     private DeviceServiceImpl deviceService;
@@ -55,6 +66,13 @@ class DeviceServiceTest {
     @BeforeEach
     void setUp() {
         lenient().when(redisTemplate.opsForHash()).thenReturn(hashOperations);
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        lenient().when(offlineConfig.getHeartbeatTimeoutSeconds()).thenReturn(90);
+        lenient().when(offlineConfig.getTerminateDelaySeconds()).thenReturn(120);
+        lenient().when(offlineConfig.getRecoveryGraceSeconds()).thenReturn(60);
+        lenient().when(offlineConfig.getServiceFeeDiscount()).thenReturn(new BigDecimal("0.5"));
+        // handleOnline/handleHeartbeat 中需要 chargeOrderMapper.selectCount 返回 0（无 CHARGING 订单）
+        lenient().when(chargeOrderMapper.selectCount(any())).thenReturn(0L);
     }
 
     // ==================== 设备鉴权测试（纯逻辑） ====================

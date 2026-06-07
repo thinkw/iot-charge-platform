@@ -171,4 +171,34 @@ public class MqttClientManager {
         log.info("充电桩 {} 已恢复为正常状态", sn);
         return true;
     }
+
+    /**
+     * 暂停指定设备的心跳上报（模拟离线）
+     *
+     * @param sn 设备SN
+     */
+    public boolean pauseHeartbeat(String sn) {
+        VirtualCharger charger = chargers.get(sn);
+        if (charger == null) {
+            log.warn("未找到充电桩: {}", sn);
+            return false;
+        }
+        charger.pauseHeartbeat();
+        return true;
+    }
+
+    /**
+     * 恢复指定设备的心跳上报（模拟上线）
+     *
+     * @param sn 设备SN
+     */
+    public boolean resumeHeartbeat(String sn) {
+        VirtualCharger charger = chargers.get(sn);
+        if (charger == null) {
+            log.warn("未找到充电桩: {}", sn);
+            return false;
+        }
+        charger.resumeHeartbeat();
+        return true;
+    }
 }

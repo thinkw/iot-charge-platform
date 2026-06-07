@@ -86,6 +86,32 @@ public class ChargeEventProducer {
     }
 
     /**
+     * 发送充电异常终止事件
+     * <p>
+     * 当设备在充电中离线超时导致订单被自动终止时触发。
+     * 与 CHARGING_ENDED 不同，此事件表明充电非正常结束。
+     * </p>
+     *
+     * @param order  充电订单
+     * @param reason 异常终止原因（如 "DEVICE_OFFLINE_TIMEOUT"）
+     */
+    public void publishAbnormalEndEvent(ChargeOrder order, String reason) {
+        Map<String, Object> event = new HashMap<>();
+        event.put("eventType", "CHARGE_ABNORMAL_END");
+        event.put("orderNo", order.getOrderNo());
+        event.put("orderId", order.getId());
+        event.put("userId", order.getUserId());
+        event.put("chargerId", order.getChargerId());
+        event.put("stationId", order.getStationId());
+        event.put("chargedEnergy", order.getChargedEnergy());
+        event.put("totalAmount", order.getTotalAmount());
+        event.put("reason", reason);
+        event.put("timestamp", System.currentTimeMillis());
+
+        sendEvent(event);
+    }
+
+    /**
      * 发送事件到 RocketMQ（best-effort）
      */
     private void sendEvent(Map<String, Object> event) {

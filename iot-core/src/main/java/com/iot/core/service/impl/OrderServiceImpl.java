@@ -2,11 +2,13 @@ package com.iot.core.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.iot.common.constant.DeviceConstants;
 import com.iot.common.enums.DeviceStatusEnum;
 import com.iot.common.enums.OrderStatusEnum;
 import com.iot.common.enums.PayStatusEnum;
 import com.iot.common.exception.BusinessException;
 import com.iot.common.model.PageResult;
+import com.iot.core.config.DeviceOfflineConfig;
 import com.iot.core.dto.response.OrderVO;
 import com.iot.core.entity.ChargeOrder;
 import com.iot.core.entity.Charger;
@@ -15,20 +17,26 @@ import com.iot.core.mapper.ChargeOrderMapper;
 import com.iot.core.mapper.ChargerMapper;
 import com.iot.core.mapper.StationMapper;
 import com.iot.core.mq.producer.ChargeEventProducer;
+import com.iot.core.service.ChargeEventPublisher;
 import com.iot.core.service.DeviceService;
 import com.iot.core.service.OrderService;
 import com.iot.core.service.PricingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -45,10 +53,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {
 
-    /**
-     * Redis 设备状态 Key 前缀，与 ChargeServiceImpl 保持一致
-     */
-    private static final String REDIS_KEY_DEVICE_STATUS = "device:status:";
+    /** Redis Key 常量统一使用 DeviceConstants */
 
     private final ChargeOrderMapper chargeOrderMapper;
     private final ChargerMapper chargerMapper;
@@ -57,6 +62,15 @@ public class OrderServiceImpl implements OrderService {
     private final PricingService pricingService;
     private final DeviceService deviceService;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final RedissonClient redissonClient;
+    private final DeviceOfflineConfig offlineConfig;
+
+    /**
+     * ChargeEventPublisher 由 iot-api 模块实现（WebSocket 推送）。
+     * required=false：当 iot-api 未加载时（如单元测试），此依赖为 null。
+     */
+    @Autowired(required = false)
+    private ChargeEventPublisher chargeEventPublisher;
 
     /**
      * 分页查询用户订单列表
@@ -176,12 +190,18 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(409, "订单支付状态异常，当前状态: "
                     + PayStatusEnum.fromCode(order.getPayStatus()).getDesc());
         }
-        if (order.getOrderStatus() != OrderStatusEnum.COMPLETED.getCode()) {
+        // 允许 PENDING_CONFIRM（新流程：充电结束等支付）和 COMPLETED（历史兼容）
+        if (order.getOrderStatus() != OrderStatusEnum.PENDING_CONFIRM.getCode()
+                && order.getOrderStatus() != OrderStatusEnum.COMPLETED.getCode()) {
             throw new BusinessException(409, "订单未完成，无法支付，当前状态: "
                     + OrderStatusEnum.fromCode(order.getOrderStatus()).getDesc());
         }
 
         // 使用乐观锁更新
+        // PENDING_CONFIRM 支付后转为 COMPLETED；已 COMPLETED 的保持 COMPLETED
+        if (order.getOrderStatus() == OrderStatusEnum.PENDING_CONFIRM.getCode()) {
+            order.setOrderStatus(OrderStatusEnum.COMPLETED.getCode());
+        }
         order.setPayStatus(PayStatusEnum.PAID.getCode());
         order.setPayTime(LocalDateTime.now());
         int updated = chargeOrderMapper.updateById(order); // @Version 自动检查版本号
@@ -311,7 +331,8 @@ public class OrderServiceImpl implements OrderService {
         }
         if (order.getOrderStatus() != OrderStatusEnum.CHARGING.getCode()
                 && order.getOrderStatus() != OrderStatusEnum.ABNORMAL.getCode()
-                && order.getOrderStatus() != OrderStatusEnum.PENDING_CONFIRM.getCode()) {
+                && order.getOrderStatus() != OrderStatusEnum.PENDING_CONFIRM.getCode()
+                && order.getOrderStatus() != OrderStatusEnum.AWAITING_DEVICE.getCode()) {
             throw new BusinessException(409, "订单状态不允许手动结束，当前状态: "
                     + OrderStatusEnum.fromCode(order.getOrderStatus()).getDesc());
         }
@@ -342,7 +363,7 @@ public class OrderServiceImpl implements OrderService {
         order.setElectricityFee(feeDetail.electricityFee());
         order.setServiceFee(feeDetail.serviceFee());
         order.setTotalAmount(feeDetail.totalAmount());
-        order.setOrderStatus(OrderStatusEnum.COMPLETED.getCode());
+        order.setOrderStatus(OrderStatusEnum.PENDING_CONFIRM.getCode());
         order.setCancelReason(reason);
         chargeOrderMapper.updateById(order);
 
@@ -352,7 +373,7 @@ public class OrderServiceImpl implements OrderService {
         chargerMapper.updateById(charger);
 
         // 同步更新 Redis（与 ChargeServiceImpl.stopCharge 保持一致）
-        String statusKey = REDIS_KEY_DEVICE_STATUS + charger.getSn();
+        String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + charger.getSn();
         redisTemplate.opsForHash().put(statusKey, "status",
                 String.valueOf(DeviceStatusEnum.IDLE.getCode()));
 
@@ -361,6 +382,156 @@ public class OrderServiceImpl implements OrderService {
 
         // 7. 发送充电结束事件
         chargeEventProducer.publishChargeEndEvent(order);
+    }
+
+    /**
+     * 自动终止异常订单（由心跳超时或兜底定时任务触发）
+     * <p>
+     * 当设备在充电中离线超时后，系统自动终止订单并生成账单。
+     * 与 {@link #forceEndOrder} 不同：
+     * <ul>
+     *   <li>不需要操作人（系统自动触发）</li>
+     *   <li>使用分布式锁防止并发重复终止</li>
+     *   <li>双重检查订单状态（状态守护，仅 CHARGING → ABNORMAL → PENDING_CONFIRM）</li>
+     *   <li>服务费按配置折扣率减免（异常补偿）</li>
+     *   <li>不尝试下发停止指令（设备已离线，best-effort）</li>
+     * </ul>
+     * </p>
+     *
+     * @param orderNo 订单编号
+     * @param reason  终止原因（如 "DEVICE_OFFLINE_TIMEOUT"）
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void autoTerminateOrder(String orderNo, String reason) {
+        // 0. 获取分布式锁，防止同一订单被并发终止
+        String lockKey = DeviceConstants.REDIS_KEY_ORDER_TERMINATE + orderNo;
+        RLock lock = redissonClient.getLock(lockKey);
+        boolean locked = false;
+        try {
+            locked = lock.tryLock(5, 10, TimeUnit.SECONDS);
+            if (!locked) {
+                log.info("[自动终止-跳过] orderNo: {}, 原因=获取锁失败，可能正被其他线程处理", orderNo);
+                return;
+            }
+
+            // 1. 查找订单
+            ChargeOrder order = chargeOrderMapper.selectOne(
+                    new LambdaQueryWrapper<ChargeOrder>().eq(ChargeOrder::getOrderNo, orderNo)
+            );
+            if (order == null) {
+                log.warn("[自动终止-失败] orderNo: {}, 原因=订单不存在", orderNo);
+                return;
+            }
+
+            // 2. 状态守护：只有 CHARGING 状态才允许自动终止
+            if (order.getOrderStatus() != OrderStatusEnum.CHARGING.getCode()) {
+                log.info("[自动终止-跳过] orderNo: {}, 当前状态={}, 原因=非CHARGING状态，无需终止",
+                        orderNo, OrderStatusEnum.fromCode(order.getOrderStatus()).getDesc());
+                return;
+            }
+
+            // 3. 查找关联充电桩
+            Charger charger = chargerMapper.selectById(order.getChargerId());
+            if (charger == null) {
+                log.warn("[自动终止-失败] orderNo: {}, 原因=关联充电桩不存在, chargerId={}",
+                        orderNo, order.getChargerId());
+                return;
+            }
+
+            // 4. 获取已充电量（从 Redis device:data:{sn} 读取，回退到订单记录）
+            BigDecimal finalEnergy = BigDecimal.ZERO;
+            try {
+                String dataKey = DeviceConstants.REDIS_KEY_DEVICE_DATA + charger.getSn();
+                Object energyObj = redisTemplate.opsForHash().get(dataKey, DeviceConstants.FIELD_ENERGY);
+                if (energyObj != null) {
+                    finalEnergy = new BigDecimal(energyObj.toString());
+                }
+            } catch (Exception e) {
+                log.warn("[自动终止] 读取Redis充电量失败, orderNo: {}, 回退到订单记录", orderNo, e);
+            }
+            if (finalEnergy.compareTo(BigDecimal.ZERO) <= 0 && order.getChargedEnergy() != null) {
+                finalEnergy = order.getChargedEnergy();
+            }
+
+            // 5. 先标记为 ABNORMAL（记录异常状态，用于统计）
+            LocalDateTime endTime = LocalDateTime.now();
+            order.setOrderStatus(OrderStatusEnum.ABNORMAL.getCode());
+            order.setEndTime(endTime);
+            order.setChargedEnergy(finalEnergy);
+            chargeOrderMapper.updateById(order);
+            log.info("[自动终止-ABNORMAL] orderNo: {}, 已充电量={}kWh, 终止原因={}",
+                    orderNo, finalEnergy, reason);
+
+            // 6. 计算精确费用
+            BigDecimal startTimeSeconds = BigDecimal.valueOf(
+                    java.time.Duration.between(order.getStartTime(), endTime).getSeconds());
+            PricingService.FeeDetail feeDetail = pricingService.calculateExactFee(
+                    charger.getStationId(), order.getStartTime(), endTime, finalEnergy);
+
+            // 7. 服务费按折扣率减免（设备故障补偿），电费不变
+            BigDecimal serviceFee = feeDetail.serviceFee()
+                    .multiply(offlineConfig.getServiceFeeDiscount())
+                    .setScale(2, RoundingMode.HALF_UP);
+            BigDecimal totalAmount = feeDetail.electricityFee().add(serviceFee);
+
+            // 8. 更新为 PENDING_CONFIRM（生成账单，等待用户支付）
+            order.setElectricityFee(feeDetail.electricityFee());
+            order.setServiceFee(serviceFee);
+            order.setTotalAmount(totalAmount);
+            order.setOrderStatus(OrderStatusEnum.PENDING_CONFIRM.getCode());
+            int updated = chargeOrderMapper.updateById(order);
+            if (updated == 0) {
+                log.warn("[自动终止] 订单更新失败（可能被并发修改）, orderNo: {}", orderNo);
+                return;
+            }
+
+            // 9. 恢复充电桩状态为空闲
+            charger.setStatus(DeviceStatusEnum.IDLE.getCode());
+            chargerMapper.updateById(charger);
+
+            // 同步更新 Redis 设备状态
+            String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + charger.getSn();
+            redisTemplate.opsForHash().put(statusKey, DeviceConstants.FIELD_STATUS,
+                    String.valueOf(DeviceStatusEnum.IDLE.getCode()));
+
+            // 10. 结构化日志
+            log.info("[自动终止-完成] SN={}, orderNo={}, 终止原因={}, 状态流转: CHARGING→ABNORMAL→PENDING_CONFIRM, "
+                            + "电量={}kWh, 电费={}元, 服务费={}元(折扣后, 原价={}元), 总费用={}元",
+                    charger.getSn(), orderNo, reason,
+                    finalEnergy, feeDetail.electricityFee(), serviceFee, feeDetail.serviceFee(), totalAmount);
+
+            // 11. 发送异常终止事件
+            chargeEventProducer.publishAbnormalEndEvent(order, reason);
+
+            // 12. 通过 WebSocket 推送 CHARGE_STOP 事件，通知前端订单已被自动终止
+            //     reason 字段用于前端区分"正常结束"和"异常终止"（异常终止通常伴随服务费折扣）
+            if (chargeEventPublisher != null) {
+                try {
+                    chargeEventPublisher.publishChargeStop(
+                            order.getUserId(), order.getOrderNo(), totalAmount, "ABNORMAL");
+                    log.info("[自动终止-WS推送] 已通知前端 - userId: {}, orderNo: {}, reason: {}",
+                            order.getUserId(), order.getOrderNo(), reason);
+                } catch (Exception e) {
+                    log.warn("[自动终止-WS推送] 推送失败不影响主流程 - orderNo: {}, error: {}",
+                            order.getOrderNo(), e.getMessage());
+                }
+            }
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("[自动终止-中断] orderNo: {}, 获取锁时被中断", orderNo, e);
+        } catch (Exception e) {
+            log.error("[自动终止-异常] orderNo: {}, 终止失败", orderNo, e);
+        } finally {
+            if (locked) {
+                try {
+                    lock.unlock();
+                } catch (Exception e) {
+                    log.warn("[自动终止] 释放锁异常, orderNo: {}", orderNo, e);
+                }
+            }
+        }
     }
 
     /**

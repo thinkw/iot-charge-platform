@@ -54,4 +54,42 @@ public class DeviceConstants {
 
     /** Redis 充电桩状态缓存 Key 前缀（与设备状态 Key 统一） */
     public static final String REDIS_KEY_CHARGER_STATUS = "device:status:";
+
+    /** Redis 充电锁 Key 前缀，格式：charge:lock:{chargerId} */
+    public static final String REDIS_KEY_CHARGE_LOCK = "charge:lock:";
+
+    /** Redis 订单终止锁 Key 前缀，格式：order:terminate:{orderNo}，用于防止并发终止同一订单 */
+    public static final String REDIS_KEY_ORDER_TERMINATE = "order:terminate:";
+
+    /** Redis 设备恢复等待 Key 前缀，格式：device:recovery:{sn}，记录设备恢复后等待状态上报的截止时间 */
+    public static final String REDIS_KEY_RECOVERY_WAIT = "device:recovery:";
+
+    /** Redis 设备离线时间 Key 前缀，格式：device:offline:time:{sn}，记录设备最近一次离线的时间戳 */
+    public static final String REDIS_KEY_OFFLINE_TIME = "device:offline:time:";
+
+    // ==================== Redis Hash 字段常量 ====================
+
+    /** Redis Hash 中在线标识字段 */
+    public static final String FIELD_ONLINE = "online";
+
+    /** Redis Hash 中设备状态字段 */
+    public static final String FIELD_STATUS = "status";
+
+    /** Redis Hash 中最后心跳时间字段 */
+    public static final String FIELD_LAST_HEARTBEAT = "lastHeartbeat";
+
+    /** Redis Hash 中电压字段 */
+    public static final String FIELD_VOLTAGE = "voltage";
+
+    /** Redis Hash 中电流字段 */
+    public static final String FIELD_CURRENT = "current";
+
+    /** Redis Hash 中功率字段 */
+    public static final String FIELD_POWER = "power";
+
+    /** Redis Hash 中已充电量字段 */
+    public static final String FIELD_ENERGY = "energy";
+
+    /** Redis Hash 中温度字段 */
+    public static final String FIELD_TEMPERATURE = "temperature";
 }

@@ -6,10 +6,14 @@
  * - Result.data 解包
  * - 401 自动跳转登录页
  * - 统一错误提示
+ * <p>
+ * API 地址通过环境变量 VITE_API_BASE_URL 配置（编译时静态替换），
+ * 未配置时回退到 localhost:8080/api。
  * </p>
  */
 
-const BASE_URL = 'http://localhost:8080/api'
+/** API 基地址（由 Vite 编译时从 .env 注入，回退 localhost） */
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api'
 
 /** 通用请求方法 */
 function request<T = any>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, data?: any): Promise<T> {
@@ -24,7 +28,7 @@ function request<T = any>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: strin
         'Content-Type': 'application/json',
         'Authorization': token ? `Bearer ${token}` : ''
       },
-      timeout: 5000,
+      timeout: 10000,
       success: (res: any) => {
         const body = res.data
         if (res.statusCode === 401) {

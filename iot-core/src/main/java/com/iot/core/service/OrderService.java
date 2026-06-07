@@ -125,6 +125,25 @@ public interface OrderService {
     void forceEndOrder(String orderNo, Long operatorId, String reason);
 
     /**
+     * 自动终止异常订单（由心跳超时或兜底定时任务触发）
+     * <p>
+     * 当设备在充电中离线超时后，系统自动终止订单并生成账单。
+     * 与 {@link #forceEndOrder} 不同，此方法：
+     * <ul>
+     *   <li>不需要操作人（系统自动触发）</li>
+     *   <li>使用分布式锁防止并发重复终止</li>
+     *   <li>双重检查订单状态（状态守护，仅 CHARGING → ABNORMAL → PENDING_CONFIRM）</li>
+     *   <li>服务费按配置折扣率减免（异常补偿）</li>
+     *   <li>不尝试下发停止指令（设备已离线）</li>
+     * </ul>
+     * </p>
+     *
+     * @param orderNo 订单编号
+     * @param reason  终止原因（用于日志和审计），如 "DEVICE_OFFLINE_TIMEOUT"
+     */
+    void autoTerminateOrder(String orderNo, String reason);
+
+    /**
      * 管理端：管理员退款
      * <p>
      * 允许管理员直接对已支付订单进行退款操作。
