@@ -954,6 +954,49 @@ public class DeviceServiceImpl implements DeviceService {
         if (!hashData.isEmpty()) {
             redisTemplate.opsForHash().putAll(dataKey, hashData);
         }
+
+        // 旁路记录能量时间线到 Redis ZSET，用于精确计费的增量电量计算
+        recordEnergyTimeline(sn, data);
+    }
+
+    /**
+     * 旁路记录设备能量时间线到 Redis ZSET
+     * <p>
+     * 设备每 5 秒上报一次累计 energy 值，将其存入 ZSET 以便计费时获取每段分钟的实际增量。
+     * ZSET 的 score 为时间戳，member 为 "timestamp:energyValue" 格式。
+     * 设置 48 小时 TTL，定时清理过期数据防止无限增长。
+     * 记录失败只打日志不影响主流程（best-effort 策略）。
+     * </p>
+     *
+     * @param sn   设备SN
+     * @param data 上报的实时数据
+     */
+    private void recordEnergyTimeline(String sn, Map<String, Object> data) {
+        if (data == null || !data.containsKey(DeviceConstants.FIELD_ENERGY)
+                || data.get(DeviceConstants.FIELD_ENERGY) == null) {
+            return;
+        }
+
+        try {
+            String timelineKey = DeviceConstants.REDIS_KEY_ENERGY_TIMELINE + sn;
+            long timestamp = System.currentTimeMillis();
+            String energyStr = data.get(DeviceConstants.FIELD_ENERGY).toString();
+            double currentEnergy = Double.parseDouble(energyStr);
+
+            // member 格式: "timestamp:energyValue"，score 为时间戳毫秒值
+            String member = timestamp + ":" + energyStr;
+            redisTemplate.opsForZSet().add(timelineKey, member, timestamp);
+
+            // 设置过期时间
+            redisTemplate.expire(timelineKey, DeviceConstants.ENERGY_TIMELINE_TTL_HOURS, TimeUnit.HOURS);
+
+            // 清理过期数据（保留最近 TTL 小时内的记录）
+            long cutoffTime = timestamp - TimeUnit.HOURS.toMillis(
+                    DeviceConstants.ENERGY_TIMELINE_TTL_HOURS);
+            redisTemplate.opsForZSet().removeRangeByScore(timelineKey, 0, cutoffTime);
+        } catch (Exception e) {
+            log.warn("[能量时间线] 记录失败 - SN: {}, error: {}", sn, e.getMessage());
+        }
     }
 
     /**

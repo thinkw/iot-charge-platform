@@ -355,7 +355,7 @@ public class OrderServiceImpl implements OrderService {
         BigDecimal finalEnergy = order.getChargedEnergy() != null
                 ? order.getChargedEnergy() : BigDecimal.ZERO;
         PricingService.FeeDetail feeDetail = pricingService.calculateExactFee(
-                charger.getStationId(), order.getStartTime(), endTime, finalEnergy);
+                charger.getStationId(), order.getStartTime(), endTime, finalEnergy, charger.getSn());
 
         // 5. 更新订单
         order.setEndTime(endTime);
@@ -467,7 +467,7 @@ public class OrderServiceImpl implements OrderService {
             BigDecimal startTimeSeconds = BigDecimal.valueOf(
                     java.time.Duration.between(order.getStartTime(), endTime).getSeconds());
             PricingService.FeeDetail feeDetail = pricingService.calculateExactFee(
-                    charger.getStationId(), order.getStartTime(), endTime, finalEnergy);
+                    charger.getStationId(), order.getStartTime(), endTime, finalEnergy, charger.getSn());
 
             // 7. 服务费按折扣率减免（设备故障补偿），电费不变
             BigDecimal serviceFee = feeDetail.serviceFee()

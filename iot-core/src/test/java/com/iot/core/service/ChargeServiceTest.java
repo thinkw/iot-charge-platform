@@ -336,7 +336,8 @@ class ChargeServiceTest {
             chargeService.stopCharge(USER_ID, ORDER_NO);
 
             verify(pricingService).calculateExactFee(
-                    eq(STATION_ID), any(LocalDateTime.class), any(LocalDateTime.class), any(BigDecimal.class));
+                    eq(STATION_ID), any(LocalDateTime.class), any(LocalDateTime.class),
+                    any(BigDecimal.class), any(String.class));
         }
 
         @Test
@@ -370,7 +371,7 @@ class ChargeServiceTest {
                     new BigDecimal("5.00"),
                     new BigDecimal("15.00")
             );
-            when(pricingService.calculateExactFee(anyLong(), any(), any(), any())).thenReturn(feeDetail);
+            when(pricingService.calculateExactFee(anyLong(), any(), any(), any(), any())).thenReturn(feeDetail);
 
             when(chargeOrderMapper.updateById(any(ChargeOrder.class))).thenReturn(1);
             when(chargerMapper.updateById(any(Charger.class))).thenReturn(1);

@@ -577,7 +577,7 @@ class OrderServiceTest {
         when(chargeOrderMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(order);
         when(chargerMapper.selectById(100L)).thenReturn(charger);
         when(deviceService.sendCommand(anyString(), anyString(), any())).thenReturn(true);
-        when(pricingService.calculateExactFee(anyLong(), any(), any(), any(BigDecimal.class)))
+        when(pricingService.calculateExactFee(anyLong(), any(), any(), any(), any()))
                 .thenReturn(new PricingService.FeeDetail(
                         new BigDecimal("24.00"), new BigDecimal("6.00"), new BigDecimal("30.00")));
         when(chargeOrderMapper.updateById(any(ChargeOrder.class))).thenReturn(1);

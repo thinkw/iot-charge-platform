@@ -251,10 +251,10 @@ public class ChargeServiceImpl implements ChargeService {
             finalEnergy = new BigDecimal(deviceData.get("energy").toString());
         }
 
-        // 5. 计费
+        // 5. 计费（传入设备SN用于获取能量时间线增量数据）
         LocalDateTime endTime = LocalDateTime.now();
         PricingService.FeeDetail feeDetail = pricingService.calculateExactFee(
-                charger.getStationId(), order.getStartTime(), endTime, finalEnergy);
+                charger.getStationId(), order.getStartTime(), endTime, finalEnergy, charger.getSn());
 
         // 6. 更新订单
         order.setEndTime(endTime);

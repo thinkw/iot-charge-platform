@@ -48,6 +48,8 @@ public interface PricingService {
      * 精确计算充电费用（充电结束后使用）
      * <p>
      * 考虑充电时段跨越多个计费规则时段的情况，分段计算后累加。
+     * 优先使用设备上报的能量时间线数据进行增量计费，
+     * 时间线数据不可用时 fallback 到均摊计费。
      * 返回值包含电费、服务费和总金额的明细。
      * </p>
      *
@@ -55,10 +57,12 @@ public interface PricingService {
      * @param startTime   充电开始时间
      * @param endTime     充电结束时间
      * @param totalEnergy 总充电量(kWh)
+     * @param sn          设备SN，用于查询能量时间线数据
      * @return 费用明细
      */
     FeeDetail calculateExactFee(Long stationId, LocalDateTime startTime,
-                                LocalDateTime endTime, BigDecimal totalEnergy);
+                                LocalDateTime endTime, BigDecimal totalEnergy,
+                                String sn);
 
     /**
      * 获取充电站的最低电价

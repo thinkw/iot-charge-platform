@@ -4,6 +4,7 @@ import com.iot.core.entity.PricingRule;
 import com.iot.core.mapper.PricingRuleMapper;
 import com.iot.core.service.PricingService.FeeDetail;
 import com.iot.core.service.impl.PricingServiceImpl;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,9 +13,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.data.redis.core.RedisTemplate;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Collections;
@@ -45,10 +46,22 @@ class PricingServiceTest {
     @Mock
     private PricingRuleMapper pricingRuleMapper;
 
+    @Mock
+    private RedisTemplate<String, Object> redisTemplate;
+
     @InjectMocks
     private PricingServiceImpl pricingService;
 
     private static final Long STATION_ID = 1L;
+    private static final String TEST_SN = "CHG000001";
+
+    /**
+     * 每个测试前清除规则缓存，避免测试间缓存污染
+     */
+    @BeforeEach
+    void clearCache() {
+        pricingService.evictRulesCache(null);
+    }
 
     // ==================== 测试数据工厂方法 ====================
 
@@ -82,6 +95,43 @@ class PricingServiceTest {
         return rule;
     }
 
+    /**
+     * 配置 loadAllRules 的 mock 返回值序列
+     * <p>
+     * loadAllRules 的查询顺序：
+     * 1. selectList(stationId) — 站级规则
+     * 2. 若站级非空 → selectList(stationId=0, ruleType=2) — 全局峰谷
+     * 3. 若站级无基础电价 → selectList(stationId=0, ruleType=1) — 全局基础
+     * </p>
+     *
+     * @param stationRules      站级规则列表
+     * @param globalPeakValley  全局峰谷规则列表
+     * @param needGlobalBasic   是否需要全局基础电价
+     * @param globalBasic       全局基础规则列表
+     */
+    @SuppressWarnings("unchecked")
+    private void mockLoadAllRules(List<PricingRule> stationRules,
+                                   List<PricingRule> globalPeakValley,
+                                   boolean needGlobalBasic,
+                                   List<PricingRule> globalBasic) {
+        if (stationRules.isEmpty()) {
+            // 站级无规则 → 只查全局全部规则（一次调用）
+            when(pricingRuleMapper.selectList(any()))
+                    .thenReturn(globalBasic); // 全局全部规则作为 fallback
+        } else {
+            // 站级有规则 → 先查站级，再查全局峰谷，可能再查全局基础
+            when(pricingRuleMapper.selectList(any()))
+                    .thenReturn(stationRules)
+                    .thenReturn(globalPeakValley != null ? globalPeakValley : Collections.emptyList());
+            if (needGlobalBasic) {
+                when(pricingRuleMapper.selectList(any()))
+                        .thenReturn(stationRules)
+                        .thenReturn(globalPeakValley != null ? globalPeakValley : Collections.emptyList())
+                        .thenReturn(globalBasic != null ? globalBasic : Collections.emptyList());
+            }
+        }
+    }
+
     // ==================== getEffectivePricing 测试 ====================
 
     @Test
@@ -94,7 +144,10 @@ class PricingServiceTest {
         // Arrange
         PricingRule stationRule = createBasicRule(STATION_ID,
                 new BigDecimal("0.8000"), new BigDecimal("0.2000"), 10);
-        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(stationRule));
+        // loadAllRules: 站级→[rule], 全局峰谷→[], 站级已有basic→不再查全局basic
+        when(pricingRuleMapper.selectList(any()))
+                .thenReturn(List.of(stationRule))
+                .thenReturn(Collections.emptyList());
 
         // Act
         PricingRule result = pricingService.getEffectivePricing(STATION_ID, LocalDateTime.now());
@@ -119,9 +172,9 @@ class PricingServiceTest {
                 new BigDecimal("0.8000"), new BigDecimal("0.2000"), 10);
         PricingRule highPriority = createBasicRule(STATION_ID,
                 new BigDecimal("0.6000"), new BigDecimal("0.1000"), 20);
-        // 按查询结果的顺序（已按 priority 降序排列）
-        when(pricingRuleMapper.selectList(any())).thenReturn(
-                List.of(highPriority, midPriority, lowPriority));
+        when(pricingRuleMapper.selectList(any()))
+                .thenReturn(List.of(highPriority, midPriority, lowPriority))
+                .thenReturn(Collections.emptyList());
 
         // Act
         PricingRule result = pricingService.getEffectivePricing(STATION_ID, LocalDateTime.now());
@@ -145,7 +198,11 @@ class PricingServiceTest {
                 LocalTime.of(8, 0), LocalTime.of(18, 0),
                 new BigDecimal("1.2000"), new BigDecimal("0.3000"), 10);
         LocalDateTime currentTime = LocalDateTime.of(2024, 6, 1, 12, 0);
-        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(peakValley));
+        // loadAllRules: 站级→[peakValley], 全局峰谷→[], 站级无basic→查全局basic→[]
+        when(pricingRuleMapper.selectList(any()))
+                .thenReturn(List.of(peakValley))
+                .thenReturn(Collections.emptyList())
+                .thenReturn(Collections.emptyList());
 
         // Act
         PricingRule result = pricingService.getEffectivePricing(STATION_ID, currentTime);
@@ -171,7 +228,10 @@ class PricingServiceTest {
         PricingRule basic = createBasicRule(STATION_ID,
                 new BigDecimal("0.8000"), new BigDecimal("0.2000"), 10);
         LocalDateTime currentTime = LocalDateTime.of(2024, 6, 1, 20, 0);
-        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(peakValley, basic));
+        // loadAllRules: 站级→[peakValley, basic], 全局峰谷→[], 站级有basic→不再查全局basic
+        when(pricingRuleMapper.selectList(any()))
+                .thenReturn(List.of(peakValley, basic))
+                .thenReturn(Collections.emptyList());
 
         // Act
         PricingRule result = pricingService.getEffectivePricing(STATION_ID, currentTime);
@@ -193,7 +253,7 @@ class PricingServiceTest {
         // Arrange
         PricingRule globalRule = createBasicRule(0L,
                 new BigDecimal("0.9000"), new BigDecimal("0.1500"), 5);
-        // 第一次调用（站级）返回空，第二次调用（全局）返回全局规则
+        // loadAllRules: 站级→[]，走全局全部规则→[globalRule]
         when(pricingRuleMapper.selectList(any()))
                 .thenReturn(Collections.emptyList())
                 .thenReturn(List.of(globalRule));
@@ -219,7 +279,11 @@ class PricingServiceTest {
                 LocalTime.of(22, 0), LocalTime.of(6, 0),
                 new BigDecimal("0.5000"), new BigDecimal("0.1000"), 10);
         LocalDateTime nightTime = LocalDateTime.of(2024, 6, 1, 23, 0);
-        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(peakValley));
+        // loadAllRules: 站级→[peakValley], 全局峰谷→[], 站级无basic→查全局basic→[]
+        when(pricingRuleMapper.selectList(any()))
+                .thenReturn(List.of(peakValley))
+                .thenReturn(Collections.emptyList())
+                .thenReturn(Collections.emptyList());
 
         // Act
         PricingRule result = pricingService.getEffectivePricing(STATION_ID, nightTime);
@@ -245,7 +309,10 @@ class PricingServiceTest {
         PricingRule basic = createBasicRule(STATION_ID,
                 new BigDecimal("0.8000"), new BigDecimal("0.2000"), 5);
         LocalDateTime noonTime = LocalDateTime.of(2024, 6, 1, 12, 0);
-        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(peakValley, basic));
+        // loadAllRules: 站级→[peakValley, basic], 全局峰谷→[], 站级有basic→不查全局basic
+        when(pricingRuleMapper.selectList(any()))
+                .thenReturn(List.of(peakValley, basic))
+                .thenReturn(Collections.emptyList());
 
         // Act
         PricingRule result = pricingService.getEffectivePricing(STATION_ID, noonTime);
@@ -270,7 +337,10 @@ class PricingServiceTest {
         // Arrange
         PricingRule rule = createBasicRule(STATION_ID,
                 new BigDecimal("0.8000"), new BigDecimal("0.2000"), 10);
-        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(rule));
+        // loadAllRules: 站级→[rule], 全局峰谷→[]
+        when(pricingRuleMapper.selectList(any()))
+                .thenReturn(List.of(rule))
+                .thenReturn(Collections.emptyList());
 
         // Act
         BigDecimal result = pricingService.estimateFee(STATION_ID, new BigDecimal("50"));
@@ -303,7 +373,10 @@ class PricingServiceTest {
          * 预期：返回 BigDecimal.ZERO
          */
         // Arrange
-        when(pricingRuleMapper.selectList(any())).thenReturn(Collections.emptyList());
+        // loadAllRules: 站级→[], 全局全部→[]
+        when(pricingRuleMapper.selectList(any()))
+                .thenReturn(Collections.emptyList())
+                .thenReturn(Collections.emptyList());
 
         // Act
         BigDecimal result = pricingService.estimateFee(STATION_ID, new BigDecimal("50"));
@@ -328,7 +401,10 @@ class PricingServiceTest {
                 new BigDecimal("0.6000"), new BigDecimal("0.1500"), 5);
         PricingRule rule3 = createBasicRule(STATION_ID,
                 new BigDecimal("1.0000"), new BigDecimal("0.3000"), 20);
-        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(rule1, rule2, rule3));
+        // loadAllRules: 站级→[r1,r2,r3], 全局峰谷→[]
+        when(pricingRuleMapper.selectList(any()))
+                .thenReturn(List.of(rule1, rule2, rule3))
+                .thenReturn(Collections.emptyList());
 
         // Act
         BigDecimal result = pricingService.getMinPrice(STATION_ID);
@@ -352,8 +428,9 @@ class PricingServiceTest {
                 new BigDecimal("0.7000"), new BigDecimal("0.1500"), 5);
         PricingRule globalRule3 = createBasicRule(0L,
                 new BigDecimal("1.2000"), new BigDecimal("0.3000"), 20);
+        // loadAllRules: 站级→[], 全局全部→[g1,g2,g3]
         when(pricingRuleMapper.selectList(any()))
-                .thenReturn(Collections.emptyList())      // 站级无规则
+                .thenReturn(Collections.emptyList())
                 .thenReturn(List.of(globalRule1, globalRule2, globalRule3));
 
         // Act
@@ -379,16 +456,18 @@ class PricingServiceTest {
         // Arrange
         PricingRule rule = createBasicRule(STATION_ID,
                 new BigDecimal("0.8000"), new BigDecimal("0.2000"), 10);
-        // calculateExactFee 内部会多次调用 selectList
-        // （getEffectivePricing 一次 + 自身逻辑一次），全部返回相同规则
-        when(pricingRuleMapper.selectList(any())).thenReturn(List.of(rule));
+        // loadAllRules: 站级→[rule], 全局峰谷→[]
+        when(pricingRuleMapper.selectList(any()))
+                .thenReturn(List.of(rule))
+                .thenReturn(Collections.emptyList());
 
         LocalDateTime startTime = LocalDateTime.of(2024, 6, 1, 10, 0);
         LocalDateTime endTime = LocalDateTime.of(2024, 6, 1, 11, 0);
         BigDecimal totalEnergy = new BigDecimal("100");
 
         // Act
-        FeeDetail result = pricingService.calculateExactFee(STATION_ID, startTime, endTime, totalEnergy);
+        FeeDetail result = pricingService.calculateExactFee(
+                STATION_ID, startTime, endTime, totalEnergy, TEST_SN);
 
         // Assert
         assertEquals(0, result.electricityFee().compareTo(new BigDecimal("80.00")),
@@ -400,21 +479,86 @@ class PricingServiceTest {
     }
 
     @Test
-    @DisplayName("calculateExactFee - totalEnergy=0 → 返回零费用")
+    @DisplayName("calculateExactFee - totalEnergy=0 → 返回零费用，不查 DB 和 Redis")
     void calculateExactFee_ZeroEnergy_ReturnsZeroFee() {
         /*
          * 测试场景：充电量为 0
-         * 预期：直接返回 FeeDetail(0, 0, 0)，不需要查询计费规则
+         * 预期：直接返回 FeeDetail(0, 0, 0)，不需要查询计费规则和 Redis
          */
         // Act
         LocalDateTime startTime = LocalDateTime.of(2024, 6, 1, 10, 0);
         LocalDateTime endTime = LocalDateTime.of(2024, 6, 1, 11, 0);
-        FeeDetail result = pricingService.calculateExactFee(STATION_ID, startTime, endTime, BigDecimal.ZERO);
+        FeeDetail result = pricingService.calculateExactFee(
+                STATION_ID, startTime, endTime, BigDecimal.ZERO, TEST_SN);
 
         // Assert
         assertEquals(BigDecimal.ZERO, result.electricityFee(), "电费应为 0");
         assertEquals(BigDecimal.ZERO, result.serviceFee(), "服务费应为 0");
         assertEquals(BigDecimal.ZERO, result.totalAmount(), "总金额应为 0");
         verifyNoInteractions(pricingRuleMapper);
+        verifyNoInteractions(redisTemplate);
+    }
+
+    // ==================== 缓存相关测试 ====================
+
+    @Test
+    @DisplayName("规则缓存 - 第二次查询同一站 → 走缓存，不查 DB")
+    void cache_SecondQuerySameStation_UsesCachedRules() {
+        /*
+         * 测试场景：先查一次 stationId=1 的规则，再查一次
+         * 预期：第二次查询走缓存，不再调用 selectList
+         */
+        // Arrange
+        PricingRule rule = createBasicRule(STATION_ID,
+                new BigDecimal("0.8000"), new BigDecimal("0.2000"), 10);
+        when(pricingRuleMapper.selectList(any()))
+                .thenReturn(List.of(rule))
+                .thenReturn(Collections.emptyList());
+
+        // Act - 第一次查询（写缓存）
+        PricingRule result1 = pricingService.getEffectivePricing(STATION_ID, LocalDateTime.now());
+        assertNotNull(result1);
+
+        // Act - 第二次查询（走缓存，不再调 selectList）
+        // 如果走缓存，则不再调用 selectList（之前的 mock 已耗尽，再调会抛异常）
+        PricingRule result2 = pricingService.getEffectivePricing(STATION_ID, LocalDateTime.now());
+
+        // Assert
+        assertNotNull(result2);
+        assertEquals(result1.getElectricityPrice(), result2.getElectricityPrice());
+
+        // 验证只调用了2次 selectList（站级1次 + 全局峰谷1次），而不是4次
+        verify(pricingRuleMapper, times(2)).selectList(any());
+    }
+
+    @Test
+    @DisplayName("规则缓存 - evictRulesCache 后 → 重新查 DB")
+    void cache_AfterEvict_ReloadsFromDb() {
+        /*
+         * 测试场景：查一次→清除缓存→再查一次
+         * 预期：清除缓存后需要重新查 DB
+         */
+        // Arrange
+        PricingRule rule = createBasicRule(STATION_ID,
+                new BigDecimal("0.8000"), new BigDecimal("0.2000"), 10);
+        // 第一次 loadAllRules 需要2次调用
+        // 清除缓存后第二次 loadAllRules 又需要2次调用，共4次
+        when(pricingRuleMapper.selectList(any()))
+                .thenReturn(List.of(rule))
+                .thenReturn(Collections.emptyList())
+                .thenReturn(List.of(rule))
+                .thenReturn(Collections.emptyList());
+
+        // Act - 第一次查询
+        pricingService.getEffectivePricing(STATION_ID, LocalDateTime.now());
+
+        // 清除缓存
+        pricingService.evictRulesCache(STATION_ID);
+
+        // Act - 第二次查询（重新查 DB）
+        pricingService.getEffectivePricing(STATION_ID, LocalDateTime.now());
+
+        // Assert - 共4次 selectList 调用
+        verify(pricingRuleMapper, times(4)).selectList(any());
     }
 }

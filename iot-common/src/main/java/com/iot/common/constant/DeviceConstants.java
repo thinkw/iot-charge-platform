@@ -52,6 +52,12 @@ public class DeviceConstants {
     /** Redis 设备实时数据 Key 前缀，格式：device:data:{sn} */
     public static final String REDIS_KEY_DEVICE_DATA = "device:data:";
 
+    /** Redis 设备能量时间线 Key 前缀（ZSET），格式：device:energy:timeline:{sn}，用于存储每分钟的增量电量 */
+    public static final String REDIS_KEY_ENERGY_TIMELINE = "device:energy:timeline:";
+
+    /** Redis 能量时间线数据保留时长（小时），覆盖最长充电订单 */
+    public static final int ENERGY_TIMELINE_TTL_HOURS = 48;
+
     /** Redis 充电桩状态缓存 Key 前缀（与设备状态 Key 统一） */
     public static final String REDIS_KEY_CHARGER_STATUS = "device:status:";
 
