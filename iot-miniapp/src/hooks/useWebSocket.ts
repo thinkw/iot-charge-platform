@@ -24,6 +24,8 @@ export function useWebSocket(path: string) {
 
   let socketTask: UniApp.SocketTask | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  /** 重连尝试次数，每次成功连接后重置 */
+  let reconnectAttempt = 0
   let manualDisconnect = false
   const handlers = new Map<string, Set<MessageHandler>>()
 
@@ -35,6 +37,7 @@ export function useWebSocket(path: string) {
     socketTask = uni.connectSocket({ url, complete: () => {} })
 
     socketTask.onOpen(() => {
+      reconnectAttempt = 0
       connected.value = true
       console.log('[WS] 连接成功:', url)
     })
@@ -53,9 +56,9 @@ export function useWebSocket(path: string) {
     socketTask.onClose(() => {
       connected.value = false
       socketTask = null
-      // 非主动断开时 3 秒后自动重连
+      // 非主动断开时自动重连（指数退避 + 随机抖动）
       if (!manualDisconnect) {
-        reconnectTimer = setTimeout(connect, 3000)
+        scheduleReconnect()
       }
     })
 
@@ -88,6 +91,30 @@ export function useWebSocket(path: string) {
     } else {
       connected.value = false
     }
+  }
+
+  /**
+   * 断线重连调度（指数退避 + 随机抖动）
+   * <p>
+   * 重连间隔：min(3000 × 2^attempt, 30000)ms，叠加 ±500ms 随机抖动。
+   * 防止服务端重启时所有客户端同时重连导致惊群效应。
+   * </p>
+   */
+  function scheduleReconnect() {
+    if (reconnectTimer) return
+    const base = 3000
+    const max = 30000
+    const delay = Math.min(base * Math.pow(2, reconnectAttempt), max)
+    // 随机抖动 ±500ms，防止惊群效应
+    const jitter = (Math.random() - 0.5) * 1000
+    const actualDelay = Math.max(1000, Math.round(delay + jitter))
+
+    reconnectTimer = setTimeout(() => {
+      reconnectAttempt++
+      reconnectTimer = null
+      console.log(`[WS] 尝试重连...(第${reconnectAttempt}次, 间隔${Math.round(actualDelay / 1000)}s)`)
+      connect()
+    }, actualDelay)
   }
 
   /** 注册消息处理器 */

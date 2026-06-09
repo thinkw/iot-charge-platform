@@ -34,7 +34,8 @@ function buildDashboardWsUrl(userId: number | string): string {
     const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) || ''
     const protocol = apiBase.startsWith('https') ? 'wss:' : 'ws:'
     const host = apiBase.replace(/^https?:\/\//, '').replace(/\/.*$/, '')
-    base = `${protocol}//${host}/ws/charge`
+    // 兜底：环境变量缺失时使用默认 localhost 地址
+    base = host ? `${protocol}//${host}/ws/charge` : 'ws://localhost:8080/ws/charge'
   }
   if (base.includes('{{userId}}')) {
     return base.replace(/\{\{userId\}\}/g, String(userId))
@@ -133,6 +134,20 @@ export const useDashboardStore = defineStore('dashboard', () => {
       if (msg.data) dashboard.value = { ...dashboard.value, ...msg.data }
     })
     ws.onMessage('ALARM', () => loadFaultStats())
+
+    // 重连后 HTTP 兜底：跳过首次连接事件，仅在断线重连时触发全量拉取，
+    // 消除 WS 断线期间因错过 DASHBOARD_UPDATE 推送造成的数据空窗
+    let initialWsConnection = true
+    watch(ws.connected, (v) => {
+      if (v) {
+        if (initialWsConnection) {
+          initialWsConnection = false
+          return
+        }
+        console.log('[Dashboard] WS 重连成功，HTTP 兜底刷新仪表盘')
+        loadDashboard()
+      }
+    })
 
     initialized = true
 

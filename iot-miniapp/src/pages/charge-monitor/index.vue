@@ -71,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, watch, onMounted, onUnmounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { stopCharge } from '@/api/charge'
 import { getOrderApi } from '@/api/order'
@@ -234,6 +234,48 @@ onMounted(async () => {
 
   // 7) 建立 WebSocket 连接
   connect()
+
+  // 8) 监听重连：断线重连后通过 HTTP 补偿可能错过的状态变更
+  //    使用 initialConnection 标志跳过首次连接（已由步骤2 HTTP 初始查询覆盖）
+  let initialConnection = true
+  watch(wsConnected, async (connected) => {
+    if (!connected) return
+    if (initialConnection) {
+      initialConnection = false
+      return
+    }
+    // 重连成功 → 补查订单状态，恢复可能错过的 PENDING→CHARGING→FINISHED 转换
+    try {
+      const order: any = await getOrderApi(orderNo.value)
+      if (!order) return
+
+      if (order.orderStatus === 5 && phase.value !== 'finished') {
+        // 断线期间订单已结束（含异常自动终止）→ 弹窗通知
+        const amount = order.totalAmount !== undefined ? Number(order.totalAmount).toFixed(2) : '--'
+        phase.value = 'finished'
+        stopReason.value = 'NORMAL'
+        disconnect()
+        uni.showModal({
+          title: '充电已结束',
+          content: `本次充电费用：${amount} 元`,
+          showCancel: false,
+          confirmText: '查看订单',
+          success: () => {
+            uni.redirectTo({
+              url: `/pages/order-detail/index?orderNo=${encodeURIComponent(orderNo.value)}`
+            })
+          }
+        })
+      } else if (order.orderStatus === 6) {
+        phase.value = 'pending'
+      } else if (order.orderStatus === 1) {
+        // 仍在充电中或刚启动，CHARGE_PROGRESS 会随后更新实时数据
+        phase.value = 'charging'
+      }
+    } catch {
+      // 静默处理：API 不可用时 WS 推送仍能驱动 UI
+    }
+  })
 })
 
 function handleStop() {
