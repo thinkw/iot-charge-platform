@@ -244,11 +244,21 @@ public class ChargeServiceImpl implements ChargeService {
         }
 
         // 4. 从 Redis 读取设备最后上报的充电数据
+        //    等待 500ms 让设备有时间响应 STOP 指令并上报最终数据
+        try {
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         Map<Object, Object> deviceData = redisTemplate.opsForHash()
                 .entries(DeviceConstants.REDIS_KEY_DEVICE_DATA + charger.getSn());
         BigDecimal finalEnergy = BigDecimal.ZERO;
         if (deviceData != null && deviceData.containsKey("energy")) {
             finalEnergy = new BigDecimal(deviceData.get("energy").toString());
+        }
+        // 回退：Redis 无电量数据时使用订单记录的已充电量（与 autoTerminateOrder 保持一致）
+        if (finalEnergy.compareTo(BigDecimal.ZERO) <= 0 && order.getChargedEnergy() != null) {
+            finalEnergy = order.getChargedEnergy();
         }
 
         // 5. 计费（传入设备SN用于获取能量时间线增量数据）
@@ -265,15 +275,21 @@ public class ChargeServiceImpl implements ChargeService {
         order.setOrderStatus(OrderStatusEnum.PENDING_CONFIRM.getCode());
         chargeOrderMapper.updateById(order);
 
-        // 7. 更新充电桩状态为空闲
-        charger.setStatus(DeviceStatusEnum.IDLE.getCode());
-        charger.setChargedEnergy(finalEnergy);
-        chargerMapper.updateById(charger);
+        // 7. 更新充电桩状态：仅当设备处于 CHARGING 状态时才恢复为 IDLE
+        //    若设备已 FAULT/OFFLINE，保持原状态不变（故障/离线需人工干预修复）
+        Integer currentChargerStatus = charger.getStatus();
+        if (currentChargerStatus != null && currentChargerStatus == DeviceStatusEnum.CHARGING.getCode()) {
+            charger.setStatus(DeviceStatusEnum.IDLE.getCode());
+            charger.setChargedEnergy(finalEnergy);
+            chargerMapper.updateById(charger);
 
-        // 同步更新 Redis
-        String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + charger.getSn();
-        redisTemplate.opsForHash().put(statusKey, "status",
-                String.valueOf(DeviceStatusEnum.IDLE.getCode()));
+            // 同步更新 Redis
+            String statusKey = DeviceConstants.REDIS_KEY_DEVICE_STATUS + charger.getSn();
+            redisTemplate.opsForHash().put(statusKey, "status",
+                    String.valueOf(DeviceStatusEnum.IDLE.getCode()));
+        } else {
+            log.info("[停桩] 设备状态非CHARGING({})，保持原状态 - orderNo: {}", currentChargerStatus, orderNo);
+        }
 
         log.info("[停桩] 充电完成 - orderNo: {}, 电量: {}kWh, 总费用: {}元",
                 orderNo, finalEnergy, feeDetail.totalAmount());

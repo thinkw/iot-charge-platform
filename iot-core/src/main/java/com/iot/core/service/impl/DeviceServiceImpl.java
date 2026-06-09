@@ -543,6 +543,14 @@ public class DeviceServiceImpl implements DeviceService {
 
         // 5. 发送告警 MQ 事件
         sendAlarmEvent(charger.getId(), charger.getStationId(), alarmType, alarmLevel, content);
+
+        // 6. 自动终止该设备上 CHARGING 状态的充电订单
+        //    故障期间设备无法继续充电，系统代为终止并推送 CHARGE_STOP(ABNORMAL) 通知用户
+        try {
+            terminateChargingOrdersForDevice(sn);
+        } catch (Exception e) {
+            log.error("[故障上报] 自动终止订单异常 - SN: {}, error: {}", sn, e.getMessage(), e);
+        }
     }
 
     // ==================== 指令下发 ====================

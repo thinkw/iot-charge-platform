@@ -357,7 +357,8 @@ class ChargeServiceTest {
          */
         private void mockStopChargeSuccessFlow() {
             when(chargeOrderMapper.selectOne(any())).thenReturn(chargingOrder);
-            when(chargerMapper.selectById(CHARGER_ID)).thenReturn(idleCharger);
+            // 使用 chargingCharger：真实场景停桩时设备处于 CHARGING 状态
+            when(chargerMapper.selectById(CHARGER_ID)).thenReturn(chargingCharger);
             when(deviceService.sendCommand(anyString(), anyString(), anyMap())).thenReturn(true);
 
             // 设备实时数据（包含最终充电量）
