@@ -1,5 +1,5 @@
 import { http } from './request'
-import type { StationVO } from '@/types/api'
+import type { StationVO, StationDetailVO } from '@/types/api'
 
 /**
  * 查询附近充电站
@@ -15,7 +15,7 @@ export function listStationsApi(params: {
   return http.get<StationVO[]>('/station/list', params)
 }
 
-/** 充电站详情 */
+/** 充电站详情（含充电桩列表） */
 export function getStationApi(stationId: number) {
-  return http.get<StationVO>(`/station/${stationId}`)
+  return http.get<StationDetailVO>(`/station/${stationId}`)
 }
