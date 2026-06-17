@@ -12,7 +12,7 @@
 
       <!-- 充电桩列表 -->
       <view class="section-title">充电桩列表</view>
-      <view v-for="charger in station.chargers" :key="charger.id" class="charger-card"
+      <view v-for="charger in chargers" :key="charger.id" class="charger-card"
         @tap="goCharger(charger.id)">
         <view class="charger-left">
           <text class="charger-name">{{ charger.name || charger.sn }}</text>
@@ -34,8 +34,10 @@ import { ref, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { getStationApi } from '@/api/station'
 import { DEVICE_STATUS_MAP } from '@/utils/constants'
+import type { StationVO, ChargerVO } from '@/types/api'
 
-const station = ref<any>(null)
+const station = ref<StationVO | null>(null)
+const chargers = ref<ChargerVO[]>([])
 const loading = ref(false)
 let stationId = 0
 
@@ -47,7 +49,12 @@ function goCharger(id: number) { uni.navigateTo({ url: `/pages/charger-detail/in
 
 onMounted(async () => {
   loading.value = true
-  try { station.value = await getStationApi(stationId) } catch { /* 后端不可用时忽略 */ } finally { loading.value = false }
+  try {
+    const detail = await getStationApi(stationId)
+    // 后端返回 StationDetailVO: { station: {...}, chargers: [...] }
+    station.value = detail.station
+    chargers.value = detail.chargers || []
+  } catch { /* 后端不可用时忽略 */ } finally { loading.value = false }
 })
 </script>
 

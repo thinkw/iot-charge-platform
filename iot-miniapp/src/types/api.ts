@@ -44,10 +44,19 @@ export interface StationVO {
   address: string
   longitude?: number
   latitude?: number
+  businessHours?: string
+  contact?: string
   distance?: number
   totalChargers: number
   availableChargers: number
+  availableCount?: number
   status?: number
+}
+
+/** 充电站详情（含充电桩列表），对应后端 StationDetailVO */
+export interface StationDetailVO {
+  station: StationVO
+  chargers: ChargerVO[]
 }
 
 export interface ChargerVO {
